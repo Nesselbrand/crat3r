@@ -100,6 +100,8 @@ class Assignment final {
 
         // TODO: Assignment 1.x
         // Destroy and free any ressources you have created.
+        vkDestroyBuffer(device, m_storageBuffer, nullptr);
+        vkFreeMemory(device, m_storageBufferMemory, nullptr);
 
         m_particleRenderer.deinit();
         m_app.deinit();
@@ -147,6 +149,30 @@ class Assignment final {
         // CPU-memory and copy the initial data to it. You may then unmap the memory immediately after writing to it.
         //
         // [ New functions: vkMapMemory, vkUnmapMemory ]
+
+        const VkDevice device = m_app.getDevice();
+
+        createBuffer(bufferSize,
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     m_storageBuffer,
+                     m_storageBufferMemory
+                     );
+
+        //map to cpu memory
+        //mapping flags sind schon beim reservieren des speichers festgelegt -> 0
+        void* data = nullptr;
+        VK_CHECK(vkMapMemory(device,
+                             m_storageBufferMemory,
+                             0,
+                             bufferSize,
+                             0,
+                             &data
+                             ));
+        //transfer to cpu memory and unmap
+        std::memcpy(data, particlesInit.data(), bufferSize);
+        vkUnmapMemory(device, m_storageBufferMemory);
+
 
         // TODO: Assignment 1.2
         // Now, create a staging buffer so we can store the particle data in device local memory.
@@ -317,14 +343,13 @@ class Assignment final {
     }
 
     //--------------------------------------------------------------------------------------------------
-
+    //memoryTypeBits -> memory type i ist für diesen Buffer erlaubt
     uint32_t findMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags propertyFlags) {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(m_app.getPhysicalDevice(), &memProperties);
-
+        //finde den ersten passenden memorytype mit allen gewünschten properties
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((memoryTypeBits & (1 << i)) &&
-                (memProperties.memoryTypes[i].propertyFlags & propertyFlags) == propertyFlags) {
+            if ((memoryTypeBits & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & propertyFlags) == propertyFlags) {
                 return i;
             }
         }
@@ -349,6 +374,31 @@ class Assignment final {
         // Hint: The VkAllocationCallbacks* argument in all Vulkan calls can be nullptr.
 
         const VkDevice device = m_app.getDevice();
+
+        // Buffer anlegen
+        const VkBufferCreateInfo bufferInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
+
+        // Memory Requirements erheben + mappen
+        VkMemoryRequirements memoryRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
+        const uint32_t memoryTypeIndex = findMemoryType(memoryRequirements.memoryTypeBits, propertyFlags);
+
+        //Speicher allokieren
+        const VkMemoryAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &memory));
+
+        //Memory an Buffer binden
+        VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
     }
 
     void createImage(
