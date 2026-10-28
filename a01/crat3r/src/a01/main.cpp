@@ -152,27 +152,25 @@ class Assignment final {
 
         const VkDevice device = m_app.getDevice();
 
-        createBuffer(bufferSize,
-                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     m_storageBuffer,
-                     m_storageBufferMemory
-                     );
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
 
-        //map to cpu memory
-        //mapping flags sind schon beim reservieren des speichers festgelegt -> 0
+        createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory
+        );
+
+        // map to cpu memory
+        // mapping flags sind schon beim reservieren des speichers festgelegt -> 0
         void* data = nullptr;
-        VK_CHECK(vkMapMemory(device,
-                             m_storageBufferMemory,
-                             0,
-                             bufferSize,
-                             0,
-                             &data
-                             ));
-        //transfer to cpu memory and unmap
-        std::memcpy(data, particlesInit.data(), bufferSize);
-        vkUnmapMemory(device, m_storageBufferMemory);
+        VK_CHECK(vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data));
 
+        // transfer from cpu to staging buffer
+        std::memcpy(data, particlesInit.data(), bufferSize);
+        vkUnmapMemory(device, stagingMemory);
 
         // TODO: Assignment 1.2
         // Now, create a staging buffer so we can store the particle data in device local memory.
@@ -188,6 +186,27 @@ class Assignment final {
         // VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
         //    ...
         // }));
+
+        createBuffer(
+            bufferSize,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_storageBuffer,
+            m_storageBufferMemory
+        );
+
+        VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
+            const VkBufferCopy copyRegion{
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = bufferSize,
+            };
+            vkCmdCopyBuffer(commandBuffer, stagingBuffer, m_storageBuffer, 1, &copyRegion);
+        }));
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
     }
 
     void createUniformBuffers() {
@@ -343,13 +362,14 @@ class Assignment final {
     }
 
     //--------------------------------------------------------------------------------------------------
-    //memoryTypeBits -> memory type i ist für diesen Buffer erlaubt
+    // memoryTypeBits -> memory type i ist für diesen Buffer erlaubt
     uint32_t findMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags propertyFlags) {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(m_app.getPhysicalDevice(), &memProperties);
-        //finde den ersten passenden memorytype mit allen gewünschten properties
+        // finde den ersten passenden memorytype mit allen gewünschten properties
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((memoryTypeBits & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & propertyFlags) == propertyFlags) {
+            if ((memoryTypeBits & (1 << i)) &&
+                (memProperties.memoryTypes[i].propertyFlags & propertyFlags) == propertyFlags) {
                 return i;
             }
         }
@@ -358,7 +378,10 @@ class Assignment final {
     }
 
     void createBuffer(
-        VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags propertyFlags, VkBuffer& buffer,
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkMemoryPropertyFlags propertyFlags,
+        VkBuffer& buffer,
         VkDeviceMemory& memory
     ) {
         // TODO: Assignment 1.1
@@ -389,7 +412,7 @@ class Assignment final {
         vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
         const uint32_t memoryTypeIndex = findMemoryType(memoryRequirements.memoryTypeBits, propertyFlags);
 
-        //Speicher allokieren
+        // Speicher allokieren
         const VkMemoryAllocateInfo allocInfo{
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = memoryRequirements.size,
@@ -397,13 +420,19 @@ class Assignment final {
         };
         VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &memory));
 
-        //Memory an Buffer binden
+        // Memory an Buffer binden
         VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
     }
 
     void createImage(
-        VkImageType imageType, VkFormat format, VkExtent3D extent, VkImageTiling tiling, VkImageUsageFlags usage,
-        VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory
+        VkImageType imageType,
+        VkFormat format,
+        VkExtent3D extent,
+        VkImageTiling tiling,
+        VkImageUsageFlags usage,
+        VkMemoryPropertyFlags properties,
+        VkImage& image,
+        VkDeviceMemory& imageMemory
     ) {
         // TODO: Assignment 1.7
         // Implement analogously to 'createBuffer'. As we will not be implementing mip-mapping here, set the
