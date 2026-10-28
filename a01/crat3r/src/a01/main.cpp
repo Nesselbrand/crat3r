@@ -42,7 +42,7 @@ struct UniformBufferObject {
     float time;
     float dt;
 
-    uint32_t numParticles;
+    uint32_t numParticles; //nullptr anstatt eigener speicherverwaltungsfunktion
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -102,6 +102,8 @@ class Assignment final {
         // Destroy and free any ressources you have created.
         vkDestroyBuffer(device, m_storageBuffer, nullptr);
         vkFreeMemory(device, m_storageBufferMemory, nullptr);
+        vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, m_setLayout, nullptr);
 
         m_particleRenderer.deinit();
         m_app.deinit();
@@ -116,6 +118,9 @@ class Assignment final {
 
     // TODO: Assignment 1.x
     // Add any other necessary class members here.
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_descriptorSets;
 
     UniformBufferObject m_ubo{};
 
@@ -164,7 +169,7 @@ class Assignment final {
         );
 
         // map to cpu memory
-        // mapping flags sind schon beim reservieren des speichers festgelegt -> 0
+        // flags parameter ist reserviert -> 0
         void* data = nullptr;
         VK_CHECK(vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data));
 
@@ -259,6 +264,7 @@ class Assignment final {
 
     void createDescriptorPool() {
         const uint32_t framesInFlight = m_app.getSwapchain().getMaxFramesInFlight();
+        const VkDevice device =  m_app.getDevice();
 
         // TODO: Assignment 1.3
         // Fill a single 'VkDescriptorPoolSize' struct for 'framesInFlight' storage buffer descriptors.
@@ -266,6 +272,19 @@ class Assignment final {
         // Store the 'VkDescriptorPool' in a new class member and don't forget to destroy it in deinit.
         //
         // [ New functions: vkCreateDescriptorPool ]
+        const VkDescriptorPoolSize poolSize{
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = framesInFlight
+        };
+
+        const VkDescriptorPoolCreateInfo descriptorPoolInfo {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = framesInFlight,
+            .poolSizeCount = 1,
+            .pPoolSizes = &poolSize
+        };
+
+        VK_CHECK(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &m_descriptorPool)); //nullptr anstatt eigener speicherverwaltungsfunktion
 
         // TODO: Assignment 1.5
         // Now add space for 'framesInFlight' uniform buffers. Fill a second 'VkDescriptorPoolSize' and
@@ -276,11 +295,29 @@ class Assignment final {
     }
 
     void createDescriptorSetLayout() {
+        const VkDevice device = m_app.getDevice();
+
         // TODO: Assignment 1.3
         // Fill a 'VkDescriptorSetLayoutBinding' for one storage buffer at binding 0 in the compute stage.
         // Then, create a descriptor set layout for that single binding.
         //
         // [ New functions: vkCreateDescriptorSetLayout ]
+
+        // Beschreibt einen einzelnen Eintrag in einem DeskriptorSet
+        const VkDescriptorSetLayoutBinding descriptorSetLayoutBinding{
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+        };
+
+        const VkDescriptorSetLayoutCreateInfo pCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &descriptorSetLayoutBinding
+        };
+
+        VK_CHECK(vkCreateDescriptorSetLayout(device, &pCreateInfo, nullptr, &m_setLayout));
 
         // TODO: Assignment 1.5
         // Add a second layout binding at location 1 for a uniform buffer, store both bindings in an array
@@ -292,6 +329,7 @@ class Assignment final {
 
     void createDescriptorSets() {
         const uint32_t framesInFlight = m_app.getSwapchain().getMaxFramesInFlight();
+        const VkDevice device = m_app.getDevice();
 
         // TODO: Assignment 1.3
         // First, add a vector of descriptor sets as a class member and resize it here to hold 'framesInFlight' items.
@@ -300,6 +338,19 @@ class Assignment final {
         //
         // [ New functions: vkAllocateDescriptorSets ]
 
+        m_descriptorSets.resize(framesInFlight);
+
+        std::vector<VkDescriptorSetLayout> layouts(framesInFlight, m_setLayout);
+
+        const VkDescriptorSetAllocateInfo setAllocateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = m_descriptorPool,
+            .descriptorSetCount = framesInFlight,
+            .pSetLayouts = layouts.data()
+        };
+
+        VK_CHECK(vkAllocateDescriptorSets(device, &setAllocateInfo, m_descriptorSets.data()));
+
         for (size_t i = 0; i < framesInFlight; i++) {
             // TODO: Assignment 1.3
             // Now, update the descriptor sets to reference the storage buffer. Fill 'VkDescriptorBufferInfo' so
@@ -307,6 +358,23 @@ class Assignment final {
             // Reference the buffer info and set the descriptor type. Lastly, update the descriptor set.
             //
             // [ New functions: 'vkUpdateDescriptorSets' ]
+            const VkDescriptorBufferInfo bufferInfo{
+                  .buffer = m_storageBuffer,
+                  .offset = 0,
+                  .range = VK_WHOLE_SIZE,
+            };
+
+            const VkWriteDescriptorSet writeDescriptorSet{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = m_descriptorSets[i],
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType =  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &bufferInfo
+            };
+
+            vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 
             // TODO: Assignment 1.5
             // Add a second 'VkDescriptorBufferInfo' for the uniform buffer and have it reference the ith buffer.
