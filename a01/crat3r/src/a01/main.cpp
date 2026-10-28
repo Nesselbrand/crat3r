@@ -104,6 +104,8 @@ class Assignment final {
         vkFreeMemory(device, m_storageBufferMemory, nullptr);
         vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
         vkDestroyDescriptorSetLayout(device, m_setLayout, nullptr);
+        vkDestroyPipeline(device, m_pipeLine, nullptr);
+        vkDestroyPipelineLayout(device, m_pipeLineLayout, nullptr);
 
         m_particleRenderer.deinit();
         m_app.deinit();
@@ -121,6 +123,8 @@ class Assignment final {
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
+    VkPipelineLayout m_pipeLineLayout = VK_NULL_HANDLE;
+    VkPipeline m_pipeLine = VK_NULL_HANDLE;
 
     UniformBufferObject m_ubo{};
 
@@ -389,14 +393,23 @@ class Assignment final {
     }
 
     void createPipelineLayout() {
+        const VkDevice device = m_app.getDevice();
+
         // TODO: Assignment 1.4
         // Create a pipeline layout with the previously created descriptor set layout.
         //
         // [ New functions: vkCreatePipelineLayout ]
+        const VkPipelineLayoutCreateInfo pipelineLayout{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &m_setLayout,
+        };
+        VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayout, nullptr, &m_pipeLineLayout));
     }
 
     void createPipeline() {
         const std::vector<char> code = Fs::readFile("shaders/a01/particles.comp.spv");
+        const VkDevice device = m_app.getDevice();
 
         // TODO: Assignment 1.4
         // First, create a shader module from the shader code. You may store it locally and destroy it at the
@@ -404,6 +417,30 @@ class Assignment final {
         // 'VkPipelineShaderStageCreateInfo' is "main" and the pipeline cache can be 'VK_NULL_HANDLE'.
         //
         // [ New functions: vkCreateShaderModule, vkDestroyShaderModule, vkCreateComputePipelines ]
+
+        const VkShaderModuleCreateInfo moduleCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = code.size(),
+            .pCode = reinterpret_cast<const uint32_t*>(code.data())  // Kompiler Cast
+        };
+        VkShaderModule shaderModule;
+        VK_CHECK(vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule));
+
+        const VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = shaderModule,
+            .pName = "main"
+        };
+
+        const VkComputePipelineCreateInfo pipelineCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage = pipelineShaderStageCreateInfo,
+            .layout = m_pipeLineLayout
+        };
+
+        VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_pipeLine));
+        vkDestroyShaderModule(device, shaderModule, nullptr);
     }
 
     //--------------------------------------------------------------------------------------------------
@@ -418,6 +455,14 @@ class Assignment final {
         // so the group counts are x = div_round_up(NUM_PARTICLES, 256), y = 1, z = 1.
         //
         // [ New functions: vkCmdBindPipeline, vkCmdBindDescriptorSets, vkCmdDispatch ]
+
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeLine);
+
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeLineLayout, 0, 1, &m_descriptorSets[currentFrame], 0, nullptr);
+
+        const uint32_t groupX = (NUM_PARTICLES + 255) / 256;
+
+        vkCmdDispatch(commandBuffer, groupX, 1, 1);
     }
 
     void updateUniformBuffer(uint32_t currentFrame) {

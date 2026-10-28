@@ -75,6 +75,7 @@ void main() {
     // Then, use 'dragStrength' to apply a drag force to the particles. Finally, use the forces to update 
     // the velocity. You may assume the mass of all particles to be one.
 
+    pos += vel * 0.01;
     particle.pos.xyz = pos;
     particle.vel.xyz = vel;
     particle.pos.w = lifetime;
