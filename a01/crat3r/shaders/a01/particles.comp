@@ -35,7 +35,7 @@ layout(std140, binding = 0) buffer ParticleBuffer {
 // TODO: Assignment 1.7
 // Uncomment the following image sampler binding.
 //
-// layout(binding = 2) uniform sampler3D forceFieldSampler;
+layout(binding = 2) uniform sampler3D forceFieldSampler;
 
 float randf(inout int rng_state) {
     rng_state = abs(1103515245 * abs(rng_state) + 12345);
@@ -84,19 +84,28 @@ void main() {
         lifetime = mix(ubo.lifetimeMin, ubo.lifetimeMax, randf(rng));
         life = 1.0;
     } else {
-        //force effects or other stuff 
-        vel += vel * ubo.dt;
+        // TODO: Assignment 1.8
+        // Before updating the velocity, sample the force field at the particle's location. Use the uniform
+        // 'forceFieldSize' to scale the force field and 'forceFieldStrength' to adjust its strength.
+        // Take care to transform the force field values from [0,1] to [-1,1] after sampling the texture.
+        // Then, use 'dragStrength' to apply a drag force to the particles. Finally, use the forces to update
+        // the velocity. You may assume the mass of all particles to be one.
+
+        vec3 uvw = pos / ubo.forceFieldSize;
+
+        vec3 forceFieldValue = texture(forceFieldSampler, uvw).xyz;
+
+        vec3 forceFieldValueNormalized = forceFieldValue * 2 - 1;
+
+        vec3 dragForce = -ubo.dragStrength * vel;
+
+        vec3 force = forceFieldValueNormalized * ubo.forceFieldStrength + dragForce;
+
+        vel += force * ubo.dt;
     }
 
 
 
-
-    // TODO: Assignment 1.8
-    // Before updating the velocity, sample the force field at the particle's location. Use the uniform
-    // 'forceFieldSize' to scale the force field and 'forceFieldStrength' to adjust its strength.
-    // Take care to transform the force field values from [0,1] to [-1,1] after sampling the texture.
-    // Then, use 'dragStrength' to apply a drag force to the particles. Finally, use the forces to update 
-    // the velocity. You may assume the mass of all particles to be one.
 
     pos += vel * ubo.dt;
     particle.pos.xyz = pos;
