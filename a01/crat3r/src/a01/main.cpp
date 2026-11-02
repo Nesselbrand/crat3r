@@ -45,6 +45,12 @@ struct UniformBufferObject {
     uint32_t numParticles; //nullptr anstatt eigener speicherverwaltungsfunktion
 };
 
+struct UniformBufferInfo {
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    void* ptr = nullptr;
+};
+
 //--------------------------------------------------------------------------------------------------
 
 class Assignment final {
@@ -106,6 +112,11 @@ class Assignment final {
         vkDestroyDescriptorSetLayout(device, m_setLayout, nullptr);
         vkDestroyPipeline(device, m_pipeLine, nullptr);
         vkDestroyPipelineLayout(device, m_pipeLineLayout, nullptr);
+        for(UniformBufferInfo& ub : m_uniformBuffers){
+            vkUnmapMemory(device, ub.memory);
+            vkDestroyBuffer(device, ub.buffer, nullptr);
+            vkFreeMemory(device, ub.memory, nullptr);
+        }
 
         m_particleRenderer.deinit();
         m_app.deinit();
@@ -125,6 +136,7 @@ class Assignment final {
     std::vector<VkDescriptorSet> m_descriptorSets;
     VkPipelineLayout m_pipeLineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeLine = VK_NULL_HANDLE;
+    std::vector<UniformBufferInfo> m_uniformBuffers;
 
     UniformBufferObject m_ubo{};
 
@@ -225,6 +237,23 @@ class Assignment final {
         // 'VkBuffer', a 'VkDeviceMemory' and a mapped 'void*'. Either create three different vectors, or create
         // a single vector of structs. Then create the buffers similar to the particle staging buffer and
         // map them to CPU-memory. The size of the buffers is 'sizeof(UniformBufferObject)'.
+
+        m_uniformBuffers.resize(framesInFlight);
+
+        const VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        const VkDevice device = m_app.getDevice();
+        for(UniformBufferInfo& ub : m_uniformBuffers){
+            createBuffer(
+                bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                ub.buffer,
+                ub.memory
+                );
+
+            VK_CHECK(vkMapMemory(device, ub.memory, 0, bufferSize, 0, &ub.ptr));
+        }
     }
 
     void createForceFieldImage() {
@@ -276,16 +305,22 @@ class Assignment final {
         // Store the 'VkDescriptorPool' in a new class member and don't forget to destroy it in deinit.
         //
         // [ New functions: vkCreateDescriptorPool ]
-        const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = framesInFlight
-        };
+        std::array<VkDescriptorPoolSize, 2> poolSizes{{
+            {
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = framesInFlight
+            },
+            {
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = framesInFlight
+            }
+        }};
 
         const VkDescriptorPoolCreateInfo descriptorPoolInfo {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .maxSets = framesInFlight,
-            .poolSizeCount = 1,
-            .pPoolSizes = &poolSize
+            .poolSizeCount = 2,
+            .pPoolSizes = poolSizes.data()
         };
 
         VK_CHECK(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &m_descriptorPool)); //nullptr anstatt eigener speicherverwaltungsfunktion
@@ -308,17 +343,25 @@ class Assignment final {
         // [ New functions: vkCreateDescriptorSetLayout ]
 
         // Beschreibt einen einzelnen Eintrag in einem DeskriptorSet
-        const VkDescriptorSetLayoutBinding descriptorSetLayoutBinding{
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
-        };
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings {{
+            {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+            },
+            {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+            }
+        }};
 
         const VkDescriptorSetLayoutCreateInfo pCreateInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &descriptorSetLayoutBinding
+            .bindingCount = 2,
+            .pBindings = bindings.data()
         };
 
         VK_CHECK(vkCreateDescriptorSetLayout(device, &pCreateInfo, nullptr, &m_setLayout));
@@ -368,23 +411,42 @@ class Assignment final {
                   .range = VK_WHOLE_SIZE,
             };
 
-            const VkWriteDescriptorSet writeDescriptorSet{
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = m_descriptorSets[i],
-                .dstBinding = 0,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType =  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &bufferInfo
+            const VkDescriptorBufferInfo uniformInfo {
+                .buffer = m_uniformBuffers[i].buffer,
+                .offset = 0,
+                .range = VK_WHOLE_SIZE,
             };
 
-            vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+            std::array<VkWriteDescriptorSet, 2> wDescriptorSets{{
+                {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = m_descriptorSets[i],
+                    .dstBinding = 0,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType =  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pBufferInfo = &bufferInfo
+                },
+                {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = m_descriptorSets[i],
+                    .dstBinding = 1,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType =  VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .pBufferInfo = &uniformInfo
+                }
+            }};
+
+            vkUpdateDescriptorSets(device, 2, wDescriptorSets.data(), 0, nullptr);
 
             // TODO: Assignment 1.5
             // Add a second 'VkDescriptorBufferInfo' for the uniform buffer and have it reference the ith buffer.
             // Then, add a second 'VkWriteDescriptorSet' for the uniform buffer, storing both in an array or vector
             //
             // and update 'vkUpdateDescriptorSets'.
+
+
 
             // TODO: Assignment 1.7
             // Add a 'VkDescriptorImageInfo' and have it reference the image view and sampler.
@@ -471,6 +533,7 @@ class Assignment final {
 
         // TODO: Assignment 1.5
         // Copy 'm_ubo' to the mapped uniform buffer of the current frame.
+        std::memcpy(m_uniformBuffers[currentFrame].ptr, &m_ubo, sizeof(m_ubo));
     }
 
     //--------------------------------------------------------------------------------------------------
