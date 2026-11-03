@@ -42,7 +42,13 @@ struct UniformBufferObject {
     float time;
     float dt;
 
-    uint32_t numParticles;
+    uint32_t numParticles; // nullptr anstatt eigener speicherverwaltungsfunktion
+};
+
+struct UniformBufferInfo {
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    void* ptr = nullptr;
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -100,7 +106,21 @@ class Assignment final {
 
         // TODO: Assignment 1.x
         // Destroy and free any ressources you have created.
-
+        vkDestroyBuffer(device, m_storageBuffer, nullptr);
+        vkFreeMemory(device, m_storageBufferMemory, nullptr);
+        vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, m_setLayout, nullptr);
+        vkDestroyPipeline(device, m_pipeLine, nullptr);
+        vkDestroyPipelineLayout(device, m_pipeLineLayout, nullptr);
+        for (UniformBufferInfo& ub : m_uniformBuffers) {
+            vkUnmapMemory(device, ub.memory);
+            vkDestroyBuffer(device, ub.buffer, nullptr);
+            vkFreeMemory(device, ub.memory, nullptr);
+        }
+        vkDestroySampler(device, m_forceFieldSampler, nullptr);
+        vkDestroyImageView(device, m_forceFieldImageView, nullptr);
+        vkDestroyImage(device, m_forceFieldImage, nullptr);
+        vkFreeMemory(device, m_forceFieldImageMemory, nullptr);
         m_particleRenderer.deinit();
         m_app.deinit();
     }
@@ -114,6 +134,16 @@ class Assignment final {
 
     // TODO: Assignment 1.x
     // Add any other necessary class members here.
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_descriptorSets;
+    VkPipelineLayout m_pipeLineLayout = VK_NULL_HANDLE;
+    VkPipeline m_pipeLine = VK_NULL_HANDLE;
+    std::vector<UniformBufferInfo> m_uniformBuffers;
+    VkImage m_forceFieldImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_forceFieldImageMemory = VK_NULL_HANDLE;
+    VkImageView m_forceFieldImageView = VK_NULL_HANDLE;
+    VkSampler m_forceFieldSampler = VK_NULL_HANDLE;
 
     UniformBufferObject m_ubo{};
 
@@ -148,6 +178,28 @@ class Assignment final {
         //
         // [ New functions: vkMapMemory, vkUnmapMemory ]
 
+        const VkDevice device = m_app.getDevice();
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+
+        createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory
+        );
+
+        // map to cpu memory
+        // flags parameter ist reserviert -> 0
+        void* data = nullptr;
+        VK_CHECK(vkMapMemory(device, stagingMemory, 0, bufferSize, 0, &data));
+
+        // transfer from cpu to staging buffer
+        std::memcpy(data, particlesInit.data(), bufferSize);
+        vkUnmapMemory(device, stagingMemory);
+
         // TODO: Assignment 1.2
         // Now, create a staging buffer so we can store the particle data in device local memory.
         // First, have the 'createBuffer' invocation above write to local 'VkBuffer' / 'VkDeviceMemory' handles,
@@ -162,6 +214,26 @@ class Assignment final {
         // VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
         //    ...
         // }));
+
+        createBuffer(
+            bufferSize,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_storageBuffer,
+            m_storageBufferMemory
+        );
+
+        VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
+            const VkBufferCopy copyRegion{
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = bufferSize,
+            };
+            vkCmdCopyBuffer(commandBuffer, stagingBuffer, m_storageBuffer, 1, &copyRegion);
+        }));
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
     }
 
     void createUniformBuffers() {
@@ -172,6 +244,23 @@ class Assignment final {
         // 'VkBuffer', a 'VkDeviceMemory' and a mapped 'void*'. Either create three different vectors, or create
         // a single vector of structs. Then create the buffers similar to the particle staging buffer and
         // map them to CPU-memory. The size of the buffers is 'sizeof(UniformBufferObject)'.
+
+        m_uniformBuffers.resize(framesInFlight);
+
+        const VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        const VkDevice device = m_app.getDevice();
+        for (UniformBufferInfo& ub : m_uniformBuffers) {
+            createBuffer(
+                bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                ub.buffer,
+                ub.memory
+            );
+
+            VK_CHECK(vkMapMemory(device, ub.memory, 0, bufferSize, 0, &ub.ptr));
+        }
     }
 
     void createForceFieldImage() {
@@ -193,8 +282,76 @@ class Assignment final {
         // shader reading. Remember to free the staging buffer!
         //
         // [ New functions: vkCmdCopyBufferToImage ]
-    }
 
+        const VkDevice device = m_app.getDevice();
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        createBuffer(
+            imageSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory
+        );
+
+        void* data = nullptr;
+        VK_CHECK(vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data));
+        std::memcpy(data, vectorfield.data(), imageSize);
+        vkUnmapMemory(device, stagingMemory);
+
+        createImage(
+            VK_IMAGE_TYPE_3D,
+            imageFormat,
+            imageExtent,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_forceFieldImage,
+            m_forceFieldImageMemory
+        );
+
+        VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
+            transitionImageLayout(
+                commandBuffer,
+                m_forceFieldImage,
+                imageFormat,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+            );
+
+            const VkBufferImageCopy region{
+                .bufferOffset = 0,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource =
+                    {
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1,
+                    },
+                .imageOffset = {0, 0, 0},
+                .imageExtent = imageExtent,
+            };
+
+            vkCmdCopyBufferToImage(
+                commandBuffer, stagingBuffer, m_forceFieldImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region
+            );
+
+            transitionImageLayout(
+                commandBuffer,
+                m_forceFieldImage,
+                imageFormat,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            );
+        }));
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingMemory, nullptr);
+    }
     void createForceFieldImageView() {
         const VkFormat imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -203,6 +360,23 @@ class Assignment final {
         // 'levelCount' fields of the 'subresourceRange' in the create info to one.
         //
         // [ New functions: vkCreateImageView ]
+
+        const VkImageViewCreateInfo viewInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = m_forceFieldImage,
+            .viewType = VK_IMAGE_VIEW_TYPE_3D,
+            .format = imageFormat,
+            .subresourceRange = {
+                // VkImageSubresourceRange
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        VK_CHECK(vkCreateImageView(m_app.getDevice(), &viewInfo, nullptr, &m_forceFieldImageView));
     }
 
     void createForceFieldImageSampler() {
@@ -211,10 +385,29 @@ class Assignment final {
         // settings, you may set most of the other fields of the sampler create info to the default values.
         //
         // [ New functions: vkCreateSampler ]
+
+        const VkSamplerCreateInfo samplerInfo{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            //            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            //            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            //            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            //            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            //            .mipLodBias = 0.0f,
+            //            .anisotropyEnable = VK_FALSE,
+            //            .compareEnable = VK_FALSE,
+            //            .minLod = 0.0f,
+            //            .maxLod = 0.0f,
+            //            .unnormalizedCoordinates = VK_FALSE
+        };
+
+        VK_CHECK(vkCreateSampler(m_app.getDevice(), &samplerInfo, nullptr, &m_forceFieldSampler));
     }
 
     void createDescriptorPool() {
         const uint32_t framesInFlight = m_app.getSwapchain().getMaxFramesInFlight();
+        const VkDevice device = m_app.getDevice();
 
         // TODO: Assignment 1.3
         // Fill a single 'VkDescriptorPoolSize' struct for 'framesInFlight' storage buffer descriptors.
@@ -222,6 +415,22 @@ class Assignment final {
         // Store the 'VkDescriptorPool' in a new class member and don't forget to destroy it in deinit.
         //
         // [ New functions: vkCreateDescriptorPool ]
+        std::array<VkDescriptorPoolSize, 3> poolSizes{
+            {{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = framesInFlight},
+             {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = framesInFlight},
+             {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = framesInFlight}}
+        };
+
+        const VkDescriptorPoolCreateInfo descriptorPoolInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = framesInFlight,
+            .poolSizeCount = 3,
+            .pPoolSizes = poolSizes.data()
+        };
+
+        VK_CHECK(
+            vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &m_descriptorPool)
+        ); // nullptr anstatt eigener speicherverwaltungsfunktion
 
         // TODO: Assignment 1.5
         // Now add space for 'framesInFlight' uniform buffers. Fill a second 'VkDescriptorPoolSize' and
@@ -232,11 +441,37 @@ class Assignment final {
     }
 
     void createDescriptorSetLayout() {
+        const VkDevice device = m_app.getDevice();
+
         // TODO: Assignment 1.3
         // Fill a 'VkDescriptorSetLayoutBinding' for one storage buffer at binding 0 in the compute stage.
         // Then, create a descriptor set layout for that single binding.
         //
         // [ New functions: vkCreateDescriptorSetLayout ]
+
+        // Beschreibt einen einzelnen Eintrag in einem DeskriptorSet
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings{
+            {{.binding = 0,
+              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+              .descriptorCount = 1,
+              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+             {.binding = 1,
+              .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+              .descriptorCount = 1,
+              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+             {.binding = 2,
+              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              .descriptorCount = 1,
+              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT}}
+        };
+
+        const VkDescriptorSetLayoutCreateInfo pCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 3,
+            .pBindings = bindings.data()
+        };
+
+        VK_CHECK(vkCreateDescriptorSetLayout(device, &pCreateInfo, nullptr, &m_setLayout));
 
         // TODO: Assignment 1.5
         // Add a second layout binding at location 1 for a uniform buffer, store both bindings in an array
@@ -248,6 +483,7 @@ class Assignment final {
 
     void createDescriptorSets() {
         const uint32_t framesInFlight = m_app.getSwapchain().getMaxFramesInFlight();
+        const VkDevice device = m_app.getDevice();
 
         // TODO: Assignment 1.3
         // First, add a vector of descriptor sets as a class member and resize it here to hold 'framesInFlight' items.
@@ -256,6 +492,19 @@ class Assignment final {
         //
         // [ New functions: vkAllocateDescriptorSets ]
 
+        m_descriptorSets.resize(framesInFlight);
+
+        std::vector<VkDescriptorSetLayout> layouts(framesInFlight, m_setLayout);
+
+        const VkDescriptorSetAllocateInfo setAllocateInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = m_descriptorPool,
+            .descriptorSetCount = framesInFlight,
+            .pSetLayouts = layouts.data()
+        };
+
+        VK_CHECK(vkAllocateDescriptorSets(device, &setAllocateInfo, m_descriptorSets.data()));
+
         for (size_t i = 0; i < framesInFlight; i++) {
             // TODO: Assignment 1.3
             // Now, update the descriptor sets to reference the storage buffer. Fill 'VkDescriptorBufferInfo' so
@@ -263,6 +512,49 @@ class Assignment final {
             // Reference the buffer info and set the descriptor type. Lastly, update the descriptor set.
             //
             // [ New functions: 'vkUpdateDescriptorSets' ]
+            const VkDescriptorBufferInfo bufferInfo{
+                .buffer = m_storageBuffer,
+                .offset = 0,
+                .range = VK_WHOLE_SIZE,
+            };
+
+            const VkDescriptorBufferInfo uniformInfo{
+                .buffer = m_uniformBuffers[i].buffer,
+                .offset = 0,
+                .range = VK_WHOLE_SIZE,
+            };
+
+            const VkDescriptorImageInfo imageInfo{
+                .sampler = m_forceFieldSampler,
+                .imageView = m_forceFieldImageView,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+
+            std::array<VkWriteDescriptorSet, 3> wDescriptorSets{
+                {{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                  .dstSet = m_descriptorSets[i],
+                  .dstBinding = 0,
+                  .dstArrayElement = 0,
+                  .descriptorCount = 1,
+                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                  .pBufferInfo = &bufferInfo},
+                 {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                  .dstSet = m_descriptorSets[i],
+                  .dstBinding = 1,
+                  .dstArrayElement = 0,
+                  .descriptorCount = 1,
+                  .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                  .pBufferInfo = &uniformInfo},
+                 {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                  .dstSet = m_descriptorSets[i],
+                  .dstBinding = 2,
+                  .dstArrayElement = 0,
+                  .descriptorCount = 1,
+                  .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                  .pImageInfo = &imageInfo}
+                }};
+
+            vkUpdateDescriptorSets(device, 3, wDescriptorSets.data(), 0, nullptr);
 
             // TODO: Assignment 1.5
             // Add a second 'VkDescriptorBufferInfo' for the uniform buffer and have it reference the ith buffer.
@@ -277,14 +569,23 @@ class Assignment final {
     }
 
     void createPipelineLayout() {
+        const VkDevice device = m_app.getDevice();
+
         // TODO: Assignment 1.4
         // Create a pipeline layout with the previously created descriptor set layout.
         //
         // [ New functions: vkCreatePipelineLayout ]
+        const VkPipelineLayoutCreateInfo pipelineLayout{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &m_setLayout,
+        };
+        VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayout, nullptr, &m_pipeLineLayout));
     }
 
     void createPipeline() {
         const std::vector<char> code = Fs::readFile("shaders/a01/particles.comp.spv");
+        const VkDevice device = m_app.getDevice();
 
         // TODO: Assignment 1.4
         // First, create a shader module from the shader code. You may store it locally and destroy it at the
@@ -292,6 +593,30 @@ class Assignment final {
         // 'VkPipelineShaderStageCreateInfo' is "main" and the pipeline cache can be 'VK_NULL_HANDLE'.
         //
         // [ New functions: vkCreateShaderModule, vkDestroyShaderModule, vkCreateComputePipelines ]
+
+        const VkShaderModuleCreateInfo moduleCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = code.size(),
+            .pCode = reinterpret_cast<const uint32_t*>(code.data()) // Kompiler Cast
+        };
+        VkShaderModule shaderModule;
+        VK_CHECK(vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule));
+
+        const VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = shaderModule,
+            .pName = "main"
+        };
+
+        const VkComputePipelineCreateInfo pipelineCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage = pipelineShaderStageCreateInfo,
+            .layout = m_pipeLineLayout
+        };
+
+        VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_pipeLine));
+        vkDestroyShaderModule(device, shaderModule, nullptr);
     }
 
     //--------------------------------------------------------------------------------------------------
@@ -306,6 +631,23 @@ class Assignment final {
         // so the group counts are x = div_round_up(NUM_PARTICLES, 256), y = 1, z = 1.
         //
         // [ New functions: vkCmdBindPipeline, vkCmdBindDescriptorSets, vkCmdDispatch ]
+
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeLine);
+
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            m_pipeLineLayout,
+            0,
+            1,
+            &m_descriptorSets[currentFrame],
+            0,
+            nullptr
+        );
+
+        const uint32_t groupX = (NUM_PARTICLES + 255) / 256;
+
+        vkCmdDispatch(commandBuffer, groupX, 1, 1);
     }
 
     void updateUniformBuffer(uint32_t currentFrame) {
@@ -314,14 +656,15 @@ class Assignment final {
 
         // TODO: Assignment 1.5
         // Copy 'm_ubo' to the mapped uniform buffer of the current frame.
+        std::memcpy(m_uniformBuffers[currentFrame].ptr, &m_ubo, sizeof(m_ubo));
     }
 
     //--------------------------------------------------------------------------------------------------
-
+    // memoryTypeBits -> memory type i ist für diesen Buffer erlaubt
     uint32_t findMemoryType(uint32_t memoryTypeBits, VkMemoryPropertyFlags propertyFlags) {
         VkPhysicalDeviceMemoryProperties memProperties;
         vkGetPhysicalDeviceMemoryProperties(m_app.getPhysicalDevice(), &memProperties);
-
+        // finde den ersten passenden memorytype mit allen gewünschten properties
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
             if ((memoryTypeBits & (1 << i)) &&
                 (memProperties.memoryTypes[i].propertyFlags & propertyFlags) == propertyFlags) {
@@ -333,7 +676,10 @@ class Assignment final {
     }
 
     void createBuffer(
-        VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags propertyFlags, VkBuffer& buffer,
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkMemoryPropertyFlags propertyFlags,
+        VkBuffer& buffer,
         VkDeviceMemory& memory
     ) {
         // TODO: Assignment 1.1
@@ -349,18 +695,81 @@ class Assignment final {
         // Hint: The VkAllocationCallbacks* argument in all Vulkan calls can be nullptr.
 
         const VkDevice device = m_app.getDevice();
+
+        // Buffer anlegen
+        const VkBufferCreateInfo bufferInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
+
+        // Memory Requirements erheben + mappen
+        VkMemoryRequirements memoryRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memoryRequirements);
+        const uint32_t memoryTypeIndex = findMemoryType(memoryRequirements.memoryTypeBits, propertyFlags);
+
+        // Speicher allokieren
+        const VkMemoryAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &memory));
+
+        // Memory an Buffer binden
+        VK_CHECK(vkBindBufferMemory(device, buffer, memory, 0));
     }
 
     void createImage(
-        VkImageType imageType, VkFormat format, VkExtent3D extent, VkImageTiling tiling, VkImageUsageFlags usage,
-        VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory
+        VkImageType imageType,
+        VkFormat format,
+        VkExtent3D extent,
+        VkImageTiling tiling,
+        VkImageUsageFlags usage,
+        VkMemoryPropertyFlags properties,
+        VkImage& image,
+        VkDeviceMemory& imageMemory
     ) {
         // TODO: Assignment 1.7
         // Implement analogously to 'createBuffer'. As we will not be implementing mip-mapping here, set the
         // number of mip levels to one. Multisampling is also not required. The initial layout of the image
         // should be 'VK_IMAGE_LAYOUT_UNDEFINED'.
         //
-        // [ New functions: vkCreateImage, vkGetImageMemoryRequirements, vkBindImageMemory ]
+        // [ New functions: vkCreateImage , vkGetImageMemoryRequirements, vkBindImageMemory ]
+
+        const VkDevice device = m_app.getDevice();
+
+        const VkImageCreateInfo imageInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = imageType,
+            .format = format,
+            .extent = extent,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = tiling,
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+        };
+
+        VK_CHECK(vkCreateImage(device, &imageInfo, nullptr, &image));
+
+        VkMemoryRequirements memoryRequirements;
+        vkGetImageMemoryRequirements(device, image, &memoryRequirements);
+
+        const uint32_t memoryTypeIndex = findMemoryType(memoryRequirements.memoryTypeBits, properties);
+
+        const VkMemoryAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory));
+
+        vkBindImageMemory(device, image, imageMemory, 0);
     }
 
     void transitionImageLayout(

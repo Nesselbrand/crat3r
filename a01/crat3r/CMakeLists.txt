@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+find_package(Vulkan 1.3 REQUIRED COMPONENTS glslangValidator)
+
 # ----------------------------------------------------------
 
 set(VOLK_PULL_IN_VULKAN ON CACHE BOOL "" FORCE)
@@ -111,3 +113,9 @@ add_assignment(a04)
 # ----------------------------------------------------------
 
 add_subdirectory(shaders)
+
+foreach(assignment a01 a02 a03 a04)
+  if(TARGET ${assignment})
+    add_dependencies(${assignment} Shaders)
+  endif()
+endforeach()
