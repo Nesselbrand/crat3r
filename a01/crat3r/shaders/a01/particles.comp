@@ -68,20 +68,21 @@ void main() {
     //
     // Finally, update the particle's velocity, if it has not just been respawned.
 
-    life -= ubo.dt / lifetime;
-    if(life < 0.0){
-        float z = 2.0 * randf(rng) - 1.0;
-        float angle = TWO_PI * randf(rng);
-        float r = sqrt(max(0.0, 1.0 - z * z));
+    life -= ubo.dt / lifetime; //reduce particles life
+    if(life < 0.0) {
+        float z = 2.0 * randf(rng) - 1.0; // zufällige Höhe zwischen -1 <-> 1
+        float angle = TWO_PI * randf(rng); // zufälliger Winkel zwischen 0 <-> 360
+        float r = sqrt(1.0 - z * z); // distanz von z zur z-Achse
         vec3 direction = vec3(
                 r * cos(angle),
                 r * sin(angle),
-                z);
+                z); //vektor der länge 1
+        pos = ubo.spawn.xyz + direction * ubo.spawn.w; //verschieben + skalieren
 
-        pos = ubo.spawn.xyz + direction * ubo.spawn.w;
-        vel = vec3(randf(rng), randf(rng), randf(rng)) * 2.0 - 1.0;
+        vel = vec3(randf(rng), randf(rng), randf(rng)) * 2.0 - 1.0; //zufällige vel
         vel *= 0.1;
-        lifetime = mix(ubo.lifetimeMin, ubo.lifetimeMax, randf(rng));
+
+        lifetime = mix(ubo.lifetimeMin, ubo.lifetimeMax, randf(rng)); //rand zwischen min + max
         life = 1.0;
     } else {
         // TODO: Assignment 1.8

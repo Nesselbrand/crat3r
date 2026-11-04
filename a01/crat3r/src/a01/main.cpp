@@ -261,7 +261,13 @@ class Assignment final {
                 ub.memory
             );
 
-            VK_CHECK(vkMapMemory(device, ub.memory, 0, bufferSize, 0, &ub.ptr));
+            VK_CHECK(vkMapMemory(
+                device,
+                ub.memory,
+                0, //Memory Offset
+                bufferSize,
+                0, //MemoryFlags (vulcan Docs: is a bitmask of VkMemoryMapFlagBits specifying additional parameters of the memory map operation)
+                &ub.ptr));
         }
     }
 
