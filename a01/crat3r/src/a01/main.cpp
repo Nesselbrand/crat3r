@@ -215,6 +215,8 @@ class Assignment final {
         //    ...
         // }));
 
+        // vertex buffer bit benötigt aufgrund des renderns
+        // storage buffer bit benötigt aufgrund compute
         createBuffer(
             bufferSize,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -597,14 +599,14 @@ class Assignment final {
         const VkShaderModuleCreateInfo moduleCreateInfo{
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .codeSize = code.size(),
-            .pCode = reinterpret_cast<const uint32_t*>(code.data()) // Kompiler Cast
+            .pCode = reinterpret_cast<const uint32_t*>(code.data()) // Kompiler Cast (char -> uint32_t*)
         };
         VkShaderModule shaderModule;
         VK_CHECK(vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule));
 
         const VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT, //Shader Stage (Compute)
             .module = shaderModule,
             .pName = "main"
         };
@@ -636,18 +638,18 @@ class Assignment final {
 
         vkCmdBindDescriptorSets(
             commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
+            VK_PIPELINE_BIND_POINT_COMPUTE,  //compute Shader
             m_pipeLineLayout,
-            0,
-            1,
+            0, //firstSet
+            1, //setCount
             &m_descriptorSets[currentFrame],
-            0,
-            nullptr
+            0, //dynamicOFfsetCount
+            nullptr //dynamicOffsets
         );
 
-        const uint32_t groupX = (NUM_PARTICLES + 255) / 256;
+        const uint32_t groupX = (NUM_PARTICLES + 255) / 256; //div_round_up
 
-        vkCmdDispatch(commandBuffer, groupX, 1, 1);
+        vkCmdDispatch(commandBuffer, groupX, 1, 1); //X, Y, Z (groupSize configuration)
     }
 
     void updateUniformBuffer(uint32_t currentFrame) {
