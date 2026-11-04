@@ -305,28 +305,34 @@ class Assignment final {
         );
 
         void* data = nullptr;
-        VK_CHECK(vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data));
+        VK_CHECK(vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data));//0 -> offset; 0 -> memoryflags
         std::memcpy(data, vectorfield.data(), imageSize);
         vkUnmapMemory(device, stagingMemory);
 
+        //image im staging buffer geladen
+
         createImage(
-            VK_IMAGE_TYPE_3D,
+            VK_IMAGE_TYPE_3D, //angabe
             imageFormat,
             imageExtent,
-            VK_IMAGE_TILING_OPTIMAL,
-            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_TILING_OPTIMAL, //angabe
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, //angabe
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             m_forceFieldImage,
             m_forceFieldImageMemory
         );
 
+
+        //LayoutTransitions sind notwendig, da Vulkan dass nicht automatisch macht + ermöglicht passende Speicheroptimierung für Graka
+        // (z.b. Caching-Verhalten)
         VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
+            //Image als Kopierziel vorbereiten
             transitionImageLayout(
                 commandBuffer,
                 m_forceFieldImage,
                 imageFormat,
-                VK_IMAGE_LAYOUT_UNDEFINED,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                VK_IMAGE_LAYOUT_UNDEFINED, //Der bisherige Inhalt muss nicht erhalten bleiben
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL //Image als Ziel der CopyOperation vorbereiten
             );
 
             const VkBufferImageCopy region{
@@ -344,9 +350,9 @@ class Assignment final {
                 .imageExtent = imageExtent,
             };
 
-            vkCmdCopyBufferToImage(
-                commandBuffer, stagingBuffer, m_forceFieldImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region
-            );
+                                    //commandBuffer, src,       destIm,            ImgLayout,                       regionCount, regions Von Oben
+            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, m_forceFieldImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
 
             transitionImageLayout(
                 commandBuffer,
@@ -368,6 +374,10 @@ class Assignment final {
         // 'levelCount' fields of the 'subresourceRange' in the create info to one.
         //
         // [ New functions: vkCreateImageView ]
+
+        // VkImage => gebundener Speicher
+        // VkImageView => beschreibt wie der Shader die Textur sieht
+        // VKSampler => beschreibt das Abtastverhalten
 
         const VkImageViewCreateInfo viewInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -756,10 +766,10 @@ class Assignment final {
             .extent = extent,
             .mipLevels = 1,
             .arrayLayers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .samples = VK_SAMPLE_COUNT_1_BIT, //1 Sample (no multisampling)
             .tiling = tiling,
             .usage = usage,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            //.sharingMode = VK_SHARING_MODE_EXCLUSIVE, //bezieht sich auf Queues
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
         };
 
@@ -777,7 +787,7 @@ class Assignment final {
         };
         VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory));
 
-        vkBindImageMemory(device, image, imageMemory, 0);
+        vkBindImageMemory(device, image, imageMemory, 0); //0 -> memOffset
     }
 
     void transitionImageLayout(
