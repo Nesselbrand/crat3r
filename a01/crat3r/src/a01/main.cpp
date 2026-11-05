@@ -778,7 +778,7 @@ class Assignment final {
             .samples = VK_SAMPLE_COUNT_1_BIT, //1 Sample (no multisampling)
             .tiling = tiling,
             .usage = usage,
-            //.sharingMode = VK_SHARING_MODE_EXCLUSIVE, //bezieht sich auf Queues
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE, //bezieht sich auf Queues
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
         };
 
