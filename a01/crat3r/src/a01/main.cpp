@@ -291,6 +291,10 @@ class Assignment final {
         //
         // [ New functions: vkCmdCopyBufferToImage ]
 
+        // VkImage => gebundener Speicher
+        // VkImageView => beschreibt wie der Shader die Textur sieht
+        // VKSampler => beschreibt das Abtastverhalten
+
         const VkDevice device = m_app.getDevice();
 
         VkBuffer stagingBuffer = VK_NULL_HANDLE;
@@ -433,6 +437,11 @@ class Assignment final {
         // Store the 'VkDescriptorPool' in a new class member and don't forget to destroy it in deinit.
         //
         // [ New functions: vkCreateDescriptorPool ]
+
+        // VkDescriptorPool => Speicher Bereitstellung
+        // VkDescriptorSetLayout => Aufbau (Welche Bindings, wo, welche Shader Zugriff)
+        // VkDescriptorSet => konkrete Instanz mit Verweisen auf die Ressourcen (Buffer / Texturen)
+
         std::array<VkDescriptorPoolSize, 3> poolSizes{
             {{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = framesInFlight},
              {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = framesInFlight},
