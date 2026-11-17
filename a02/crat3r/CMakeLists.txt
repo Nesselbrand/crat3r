@@ -111,3 +111,9 @@ add_assignment(a04)
 # ----------------------------------------------------------
 
 add_subdirectory(shaders)
+
+foreach(assignment a01 a02 a03 a04)
+  if(TARGET ${assignment})
+    add_dependencies(${assignment} Shaders)
+  endif()
+endforeach()
