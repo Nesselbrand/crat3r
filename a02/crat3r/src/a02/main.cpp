@@ -117,6 +117,7 @@ class Assignment final {
         vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
         vkDestroyPipeline(device, m_pipeline, nullptr);
         vkDestroyFramebuffer(device, m_framebuffer, nullptr);
+        m_vertexBuffer.deinit(allocator);
 
         m_app.deinit();
     }
@@ -131,6 +132,7 @@ class Assignment final {
     VkPipelineLayout m_pipelineLayout= VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
+    Buffer m_vertexBuffer{};
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -301,10 +303,33 @@ class Assignment final {
             }
         }};
 
+        const VkVertexInputBindingDescription vertexBinding{
+            .binding = 0,
+            .stride = sizeof(Scene::Vertex),
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        };
+
+        const VkVertexInputAttributeDescription vertexAttributes[] = {
+            {
+                .location = 0,
+                .binding = 0,
+                .format = VK_FORMAT_R32G32B32_SFLOAT,
+                .offset = offsetof(Scene::Vertex, pos),
+            },
+            {
+                .location = 1,
+                .binding = 0,
+                .format = VK_FORMAT_R32G32_SFLOAT,
+                .offset = offsetof(Scene::Vertex, uv),
+            },
+        };
+
         const VkPipelineVertexInputStateCreateInfo vertexInputInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = 0,
-            .vertexAttributeDescriptionCount = 0,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &vertexBinding,
+            .vertexAttributeDescriptionCount = 2,
+            .pVertexAttributeDescriptions = vertexAttributes,
         };
 
         const VkPipelineInputAssemblyStateCreateInfo inputAssembly {
@@ -476,6 +501,11 @@ class Assignment final {
             {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}},
             {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}},
         };
+
+        m_vertexBuffer = uploadBufferWithStaging(
+            vertices.data(),
+            vertices.size() * sizeof(Scene::Vertex),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     }
 
     void createIndexBuffers() {
@@ -594,7 +624,11 @@ class Assignment final {
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffer.buffer, &offset);
+
+        vkCmdDraw(commandBuffer, 6, 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
