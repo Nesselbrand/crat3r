@@ -33,7 +33,7 @@ constexpr bool VSYNC = true;
 // Update the model to be loaded here.
 const std::string SCENE = //
     ""
-    // "assets/shiba.glb"
+     "assets/shiba.glb"
     // "assets/tokyo.glb"
     ;
 
@@ -118,6 +118,7 @@ class Assignment final {
         vkDestroyPipeline(device, m_pipeline, nullptr);
         vkDestroyFramebuffer(device, m_framebuffer, nullptr);
         m_vertexBuffer.deinit(allocator);
+        m_indexBuffer.deinit(allocator);
 
         m_app.deinit();
     }
@@ -133,6 +134,7 @@ class Assignment final {
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
     Buffer m_vertexBuffer{};
+    Buffer m_indexBuffer{};
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -227,10 +229,18 @@ class Assignment final {
         // Create a simple pipeline layout for zero descriptor sets and push constant ranges.
         //
         // [ New functions: vkCreatePipelineLayout ]
+
+        const VkPushConstantRange pConstants{
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .offset = 0,
+            .size = sizeof(VertexPushConstants),
+        };
+
         const VkPipelineLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = 0,
-            .pushConstantRangeCount = 0,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &pConstants
         };
 
         VK_CHECK(vkCreatePipelineLayout(
@@ -350,8 +360,8 @@ class Assignment final {
             .depthClampEnable = VK_FALSE,
             .rasterizerDiscardEnable = VK_FALSE,
             .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE,
-            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, //Artefakt aus 2.5 oder so
+            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .depthBiasEnable = VK_FALSE,
             .depthBiasConstantFactor = 0,
             .depthBiasClamp = 0,
@@ -492,15 +502,7 @@ class Assignment final {
         // TODO: Assignment 2.9
         // Iterate over the meshes (not nodes!) of the scene and create a vertex buffer for each mesh.
 
-        const std::vector<Scene::Vertex> vertices{
-            {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}},
-            {{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}},
-            {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}},
-
-            {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}},
-            {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}},
-            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}},
-        };
+        const auto& vertices = m_scene.meshes.front().vertices;
 
         m_vertexBuffer = uploadBufferWithStaging(
             vertices.data(),
@@ -512,6 +514,14 @@ class Assignment final {
         // TODO: Assignment 2.3
         // Create an index buffer that holds six indices pointing to the above vertices. Use a 32-bit unsigned integer
         // for the indices. You should then be able to reduce the number of vertices in the vertex buffer to four.
+        const auto& indices = m_scene.meshes.front().indices;
+
+        m_indexBuffer = uploadBufferWithStaging(
+            indices.data(),
+            indices.size() * sizeof(uint32_t),
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+            );
+
 
         // TODO: Assignment 2.6
         // Upload the indices of the first mesh in the scene instead.
@@ -620,6 +630,15 @@ class Assignment final {
             .extent = extent,
         };
 
+        const auto& node = m_scene.nodes.front();
+        const auto& mesh = m_scene.meshes[node.meshes.front()];
+
+        const VertexPushConstants pushConstants{
+            .MVP = m_app.getProjMat() * m_app.getViewMat() * node.transform
+        };
+
+
+        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants);
 
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
@@ -627,8 +646,9 @@ class Assignment final {
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffer.buffer, &offset);
+        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdDraw(commandBuffer, 6, 1, 0, 0);
+        vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
