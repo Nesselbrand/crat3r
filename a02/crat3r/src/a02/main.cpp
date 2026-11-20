@@ -119,7 +119,11 @@ class Assignment final {
         m_indexBuffer.deinit(allocator);
         freeDepthResources();
         freeFramebuffer();
-
+        vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
+        vkDestroySampler(device, m_textureSampler, nullptr);
+        vkDestroyImageView(device, m_textureImageView, nullptr);
+        m_textureImage.deinit(allocator);
 
         m_app.deinit();
     }
@@ -138,6 +142,14 @@ class Assignment final {
     Buffer m_indexBuffer{};
     Image m_depthImage{};
     VkImageView m_depthImageView = VK_NULL_HANDLE;
+
+    Image m_textureImage{};
+    VkImageView m_textureImageView = VK_NULL_HANDLE;
+    VkSampler m_textureSampler = VK_NULL_HANDLE;
+
+    VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -219,14 +231,14 @@ class Assignment final {
               .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
               .srcAccessMask = 0,
               .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT},
-            {
-             .srcSubpass = VK_SUBPASS_EXTERNAL,
-             .dstSubpass = 0,
-             .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-             .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-             .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-             .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            }}
+             {
+                 .srcSubpass = VK_SUBPASS_EXTERNAL,
+                 .dstSubpass = 0,
+                 .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                 .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                 .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+             }}
         };
 
         const VkRenderPassCreateInfo renderPassInfo{
@@ -249,6 +261,20 @@ class Assignment final {
     void createDescriptorSetLayout() {
         // TODO: Assignment 2.8
         // Create a descriptor set layout for a single combined image sampler at binding zero.
+        const VkDescriptorSetLayoutBinding textureBinding{
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        };
+
+        const VkDescriptorSetLayoutCreateInfo layoutInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &textureBinding,
+        };
+
+        VK_CHECK(vkCreateDescriptorSetLayout(m_app.getDevice(), &layoutInfo, nullptr, &m_descriptorSetLayout));
 
         // TODO: Assignment 2.12
         // Add a second layout binding for a uniform buffer.
@@ -268,7 +294,8 @@ class Assignment final {
 
         const VkPipelineLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount = 0,
+            .setLayoutCount = 1,
+            .pSetLayouts = &m_descriptorSetLayout,
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = &pConstants
         };
@@ -593,6 +620,34 @@ class Assignment final {
     void createTextures() {
         const VmaAllocator allocator = m_app.getAllocator();
 
+        const auto& texture = m_scene.textures.at(0);
+
+
+        m_textureImage = uploadImageWithStaging(
+            texture.data.data(),
+            texture.data.size(),
+            VK_IMAGE_TYPE_2D,
+            texture.format,
+            {texture.width, texture.height, 1},
+            VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            );
+
+        const VkImageViewCreateInfo viewInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = m_textureImage.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = texture.format,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        VK_CHECK(vkCreateImageView(m_app.getDevice(), &viewInfo, nullptr, &m_textureImageView));
         // TODO: Assignment 2.8
         // Upload the first texture of the scene ('m_scene.textures[0]') to a device local image. The format of
         // the texture is given by 'texture.format'. You may use the utility function 'uploadImageWithStaging'.
@@ -605,6 +660,22 @@ class Assignment final {
     void createTextureSampler() {
         // TODO: Assignment 2.8
         // Create a sampler for textures with linear minification and magnification.
+
+        const VkSamplerCreateInfo samplerInfo{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, //standard 0
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, //standard 0
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .minLod = 0.0f,
+            .maxLod = VK_LOD_CLAMP_NONE
+        };
+
+        VK_CHECK(vkCreateSampler(
+            m_app.getDevice(), &samplerInfo, nullptr, &m_textureSampler
+        ));
     }
 
     void createUniformBuffers() {
@@ -618,6 +689,21 @@ class Assignment final {
     void createDescriptorPool() {
         // TODO: Assignment 2.8
         // Create a descriptor pool for one combined image sampler.
+        const VkDescriptorPoolSize poolSize{
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+        };
+
+        const VkDescriptorPoolCreateInfo poolInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = 1,
+            .poolSizeCount = 1,
+            .pPoolSizes = &poolSize,
+        };
+
+        VK_CHECK(vkCreateDescriptorPool(
+            m_app.getDevice(), &poolInfo, nullptr, &m_descriptorPool
+        ));
 
         // TODO: Assignment 2.10
         // Reserve enough space for as many descriptors and sets as there are materials (not textures!) in the scene.
@@ -629,6 +715,34 @@ class Assignment final {
     void createDescriptorSets() {
         // TODO: Assignment 2.8
         // Allocate a descriptor set and update it by writing the texture image and sampler to binding zero.
+
+        const VkDevice device = m_app.getDevice();
+
+        const VkDescriptorSetAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = m_descriptorPool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &m_descriptorSetLayout,
+        };
+
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &m_descriptorSet));
+
+        const VkDescriptorImageInfo imageInfo{
+            .sampler = m_textureSampler,
+            .imageView = m_textureImageView,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+
+        const VkWriteDescriptorSet write{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = m_descriptorSet,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &imageInfo,
+        };
+
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 
         // TODO: Assignment 2.10
         // Create a seperate descriptor set for each material. The index of the texure a material uses is given
@@ -676,6 +790,8 @@ class Assignment final {
         };
 
         vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
 
         const VkViewport viewport{
             .x = 0.0f,
