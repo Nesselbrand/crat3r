@@ -33,7 +33,7 @@ constexpr bool VSYNC = true;
 // Update the model to be loaded here.
 const std::string SCENE = //
     ""
-     "assets/shiba.glb"
+    "assets/shiba.glb"
     // "assets/tokyo.glb"
     ;
 
@@ -112,13 +112,14 @@ class Assignment final {
 
         // TODO: Assignment 2.x
         // Destroy and free any ressources you have created.
-
         vkDestroyRenderPass(device, m_renderPass, nullptr);
         vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
         vkDestroyPipeline(device, m_pipeline, nullptr);
-        vkDestroyFramebuffer(device, m_framebuffer, nullptr);
         m_vertexBuffer.deinit(allocator);
         m_indexBuffer.deinit(allocator);
+        freeDepthResources();
+        freeFramebuffer();
+
 
         m_app.deinit();
     }
@@ -129,12 +130,14 @@ class Assignment final {
 
     // TODO: Assignment 2.x
     // Add any other necessary class members here.
-    VkRenderPass  m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout= VK_NULL_HANDLE;
+    VkRenderPass m_renderPass = VK_NULL_HANDLE;
+    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
     Buffer m_vertexBuffer{};
     Buffer m_indexBuffer{};
+    Image m_depthImage{};
+    VkImageView m_depthImageView = VK_NULL_HANDLE;
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -166,48 +169,75 @@ class Assignment final {
         //
         // [ New functions: vkCreateRenderPass ]
 
-        const VkAttachmentDescription attachmentDescription{
-            .format = targetFormat,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
+        const std::array<VkAttachmentDescription, 2> attachments{{
+            {
+                // color
+                .format = targetFormat,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            },
+            {// depth
+             .format = VK_FORMAT_D32_SFLOAT,
+             .samples = VK_SAMPLE_COUNT_1_BIT,
+             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+             .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+             .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+             .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            },
+        }};
 
         const VkAttachmentReference colorAttachReference{
-            .attachment = 0,
-            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+            .attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        const VkAttachmentReference depthAttachReference{
+            .attachment = 1,
+            .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         };
 
         const VkSubpassDescription subPasses{
             .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
             .pColorAttachments = &colorAttachReference,
+            .pDepthStencilAttachment = &depthAttachReference,
         };
 
-        // Read after Write Hazard würde eigentlich auftreten, aber wenn keine Explizite Dependency dafür gesetzt ist, erstellt vulkan eine zweite implizit (siehe VL)
-        const VkSubpassDependency dependencies{
-            .srcSubpass = VK_SUBPASS_EXTERNAL,
-            .dstSubpass = 0,
-            .srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+        // [0] Color, WAR: UI hat das Bild im vorigen Frame gesampelt -> vor dem Schreiben warten (srcAccess = 0)
+        // [1] Depth, WAW: voriger Frame hat Tiefen geschrieben, unser Clear schreibt auch (VL 04, Folie 70)
+        // Ausgehende Dependency (0 -> EXTERNAL) ergänzt Vulkan implizit (VL 04, Folie 67)
+        const std::array<VkSubpassDependency, 2> dependencies{
+            {{.srcSubpass = VK_SUBPASS_EXTERNAL,
+              .dstSubpass = 0,
+              .srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+              .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+              .srcAccessMask = 0,
+              .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT},
+            {
+             .srcSubpass = VK_SUBPASS_EXTERNAL,
+             .dstSubpass = 0,
+             .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+             .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+             .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+             .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            }}
         };
 
         const VkRenderPassCreateInfo renderPassInfo{
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-            .attachmentCount = 1,
-            .pAttachments = &attachmentDescription,
+            .attachmentCount = attachments.size(),
+            .pAttachments = attachments.data(),
             .subpassCount = 1,
             .pSubpasses = &subPasses,
-            .dependencyCount = 1,
-            .pDependencies = &dependencies
+            .dependencyCount = dependencies.size(),
+            .pDependencies = dependencies.data(),
         };
-
 
         VK_CHECK(vkCreateRenderPass(m_app.getDevice(), &renderPassInfo, nullptr, &m_renderPass));
 
@@ -243,9 +273,7 @@ class Assignment final {
             .pPushConstantRanges = &pConstants
         };
 
-        VK_CHECK(vkCreatePipelineLayout(
-            m_app.getDevice(), &layoutInfo, nullptr, &m_pipelineLayout
-        ));
+        VK_CHECK(vkCreatePipelineLayout(m_app.getDevice(), &layoutInfo, nullptr, &m_pipelineLayout));
 
         // TODO: Assignment 2.4
         // Add a push constant range for the vertex shader using the 'VertexPushConstants' struct.
@@ -298,20 +326,16 @@ class Assignment final {
         //
         // [ New functions: vkCreateGraphicsPipelines ]
 
-        const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages{{
-            {
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                .module = vertShaderModule,
-                .pName = "main"
-            },
-            {
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-                .module = fragShaderModule,
-                .pName = "main"
-            }
-        }};
+        const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages{
+            {{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+              .stage = VK_SHADER_STAGE_VERTEX_BIT,
+              .module = vertShaderModule,
+              .pName = "main"},
+             {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+              .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+              .module = fragShaderModule,
+              .pName = "main"}}
+        };
 
         const VkVertexInputBindingDescription vertexBinding{
             .binding = 0,
@@ -342,12 +366,12 @@ class Assignment final {
             .pVertexAttributeDescriptions = vertexAttributes,
         };
 
-        const VkPipelineInputAssemblyStateCreateInfo inputAssembly {
+        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
         };
 
-        const VkPipelineViewportStateCreateInfo viewportState {
+        const VkPipelineViewportStateCreateInfo viewportState{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
             .viewportCount = 1,
             .pViewports = nullptr,
@@ -355,7 +379,7 @@ class Assignment final {
             .pScissors = nullptr
         };
 
-        const VkPipelineRasterizationStateCreateInfo rasterization {
+        const VkPipelineRasterizationStateCreateInfo rasterization{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .depthClampEnable = VK_FALSE,
             .rasterizerDiscardEnable = VK_FALSE,
@@ -377,7 +401,8 @@ class Assignment final {
 
         const VkPipelineColorBlendAttachmentState colorAttachment{
             .blendEnable = VK_FALSE,
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                              VK_COLOR_COMPONENT_A_BIT,
         };
 
         const VkPipelineColorBlendStateCreateInfo colorBlending{
@@ -397,7 +422,16 @@ class Assignment final {
             .pDynamicStates = dynamicStates,
         };
 
-        const VkGraphicsPipelineCreateInfo pipelineInfo {
+        const VkPipelineDepthStencilStateCreateInfo depthStencil{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            .depthCompareOp = VK_COMPARE_OP_LESS,
+            .depthBoundsTestEnable = VK_FALSE,
+            .stencilTestEnable = VK_FALSE,
+        };
+
+        const VkGraphicsPipelineCreateInfo pipelineInfo{
             .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .stageCount = shaderStages.size(),
             .pStages = shaderStages.data(),
@@ -407,6 +441,7 @@ class Assignment final {
             .pViewportState = &viewportState,
             .pRasterizationState = &rasterization,
             .pMultisampleState = &multisampling,
+            .pDepthStencilState = &depthStencil,
             .pColorBlendState = &colorBlending,
             .pDynamicState = &dynamicState,
             .layout = m_pipelineLayout,
@@ -414,9 +449,7 @@ class Assignment final {
             .subpass = 0
         };
 
-
         VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline));
-
 
         // TODO: Assignment 2.2
         // Update the vertex input state to enable the upload of vertex data to the rasterizer. We will use one
@@ -448,11 +481,42 @@ class Assignment final {
         // TODO: Assignment 2.7
         // Create a device-local image of the specified format and size to be used as a depth attachment.
         // See 'image.hpp' for a convenient helper struct. Then create an image view of the depth image.
+
+        VK_CHECK(m_depthImage.init(
+            m_app.getAllocator(),
+            VK_IMAGE_TYPE_2D,
+            format,
+            {extent.width, extent.height, 1},
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        ));
+
+        const VkImageViewCreateInfo viewInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = m_depthImage.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .components = {VK_COMPONENT_SWIZZLE_IDENTITY}, // 0 => RGBA Werte werden nicht verschoben
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            }
+        };
+
+        VK_CHECK(vkCreateImageView(m_app.getDevice(), &viewInfo, nullptr, &m_depthImageView))
     }
 
     void freeDepthResources() {
         // TODO: Assignment 2.7
         // Destroy the depth image view and free the depth image.
+        vkDestroyImageView(m_app.getDevice(), m_depthImageView, nullptr);
+        m_depthImageView = VK_NULL_HANDLE;
+        m_depthImage.deinit(m_app.getAllocator());
     }
 
     void createFramebuffer() {
@@ -464,19 +528,19 @@ class Assignment final {
         //
         // [ New functions: vkCreateFramebuffer ]
 
+        const std::array<VkImageView, 2> attachments = {colorAttachment, m_depthImageView};
+
         const VkFramebufferCreateInfo framebufferInfo{
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = m_renderPass,
-            .attachmentCount = 1,
-            .pAttachments = &colorAttachment,
+            .attachmentCount = attachments.size(),
+            .pAttachments = attachments.data(),
             .width = imageExtent.width,
             .height = imageExtent.height,
             .layers = 1
         };
 
-        VK_CHECK(vkCreateFramebuffer(
-            m_app.getDevice(), &framebufferInfo, nullptr, &m_framebuffer
-        ));
+        VK_CHECK(vkCreateFramebuffer(m_app.getDevice(), &framebufferInfo, nullptr, &m_framebuffer));
 
         // TODO: Assignment 2.7
         // Add the depth image view as a second attachment to the framebuffer.
@@ -505,9 +569,8 @@ class Assignment final {
         const auto& vertices = m_scene.meshes.front().vertices;
 
         m_vertexBuffer = uploadBufferWithStaging(
-            vertices.data(),
-            vertices.size() * sizeof(Scene::Vertex),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            vertices.data(), vertices.size() * sizeof(Scene::Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+        );
     }
 
     void createIndexBuffers() {
@@ -517,11 +580,8 @@ class Assignment final {
         const auto& indices = m_scene.meshes.front().indices;
 
         m_indexBuffer = uploadBufferWithStaging(
-            indices.data(),
-            indices.size() * sizeof(uint32_t),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT
-            );
-
+            indices.data(), indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+        );
 
         // TODO: Assignment 2.6
         // Upload the indices of the first mesh in the scene instead.
@@ -598,20 +658,21 @@ class Assignment final {
         // [ New functions: vkCmdBeginRenderPass, vkCmdSetViewport, vkCmdSetScissor, vkCmdBindPipeline,
         //                  vkCmdDraw, vkCmdEndRenderPass ]
 
-        const VkClearValue clearColor{
-            .color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+        const VkClearValue clearValues[] = {
+            {.color = {{0.0f, 0.0f, 0.0f, 1.0f}}}, {.depthStencil = {.depth = 1.0f, .stencil = 0}}
         };
 
         const VkRenderPassBeginInfo beginInfo{
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .renderPass = m_renderPass,
             .framebuffer = m_framebuffer,
-            .renderArea = {
-                .offset = {0, 0},
-                .extent = extent,
-            },
-            .clearValueCount = 1,
-            .pClearValues = &clearColor,
+            .renderArea =
+                {
+                    .offset = {0, 0},
+                    .extent = extent,
+                },
+            .clearValueCount = 2,
+            .pClearValues = clearValues,
         };
 
         vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -633,12 +694,11 @@ class Assignment final {
         const auto& node = m_scene.nodes.front();
         const auto& mesh = m_scene.meshes[node.meshes.front()];
 
-        const VertexPushConstants pushConstants{
-            .MVP = m_app.getProjMat() * m_app.getViewMat() * node.transform
-        };
+        const VertexPushConstants pushConstants{.MVP = m_app.getProjMat() * m_app.getViewMat() * node.transform};
 
-
-        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants);
+        vkCmdPushConstants(
+            commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
+        );
 
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
@@ -694,7 +754,6 @@ class Assignment final {
         // material stores whether it is transparent in the 'material.alphaMode' (Scene::Material::AlphaMode::Opaque)
         // field. You might want to extract everything corresponding to a draw call into a seperate function.
     }
-
 
     //--------------------------------------------------------------------------------------------------
 
