@@ -435,9 +435,14 @@ class Assignment final {
         };
 
         const VkPipelineColorBlendAttachmentState colorAttachment{
-            .blendEnable = VK_FALSE,
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-                              VK_COLOR_COMPONENT_A_BIT,
+            .blendEnable = VK_TRUE,
+            .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,              //Multipliziert neue farbe mit src.a
+            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,    //Multipliziert bisherige Farbe mit 1-src.a
+            .colorBlendOp = VK_BLEND_OP_ADD,                               //Addieren => Alpha Blending Formel
+            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,                    // Quellbeitrag: src.a * 1
+            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,    // Zielbeitrag: dst.a * (1 - src.a)
+            .alphaBlendOp = VK_BLEND_OP_ADD,                               // out.a = src.a + dst.a * (1 - src.a)
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
         };
 
         const VkPipelineColorBlendStateCreateInfo colorBlending{
@@ -834,26 +839,9 @@ class Assignment final {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
         const glm::mat4 viewProjection = m_app.getProjMat() * m_app.getViewMat();
-        const VkDeviceSize offset = 0;
 
-        m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
-            const auto& mesh = m_scene.meshes[meshIndex];
-
-            vkCmdBindDescriptorSets(
-                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_materialDescriptorSets[mesh.materialIdx], 0, nullptr
-            );
-
-            const VertexPushConstants pushConstants{.MVP = viewProjection * model};
-
-            vkCmdPushConstants(
-                commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
-            );
-
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[meshIndex].buffer, &offset);
-            vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[meshIndex].buffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
-        });
+        vk_self_opaqueConditionalDraw(commandBuffer, viewProjection, true);
+        vk_self_opaqueConditionalDraw(commandBuffer, viewProjection, false);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -898,6 +886,30 @@ class Assignment final {
         // When making the draw calls, first draw all the opaque meshes, then all teh transparent meshes. A
         // material stores whether it is transparent in the 'material.alphaMode' (Scene::Material::AlphaMode::Opaque)
         // field. You might want to extract everything corresponding to a draw call into a seperate function.
+    }
+
+    void vk_self_opaqueConditionalDraw(VkCommandBuffer commandBuffer, glm::mat4 viewProjection, bool drawOpaque){
+        m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
+            const auto& mesh = m_scene.meshes[meshIndex];
+            const bool isOpaque = m_scene.materials[mesh.materialIdx].alphaMode == Scene::Material::AlphaMode::Opaque;
+
+            if (drawOpaque != isOpaque) return;
+
+            vkCmdBindDescriptorSets(
+                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_materialDescriptorSets[mesh.materialIdx], 0, nullptr
+            );
+
+            const VertexPushConstants pushConstants{.MVP = viewProjection * model};
+
+            vkCmdPushConstants(
+                commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
+            );
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[meshIndex].buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[meshIndex].buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+        });
     }
 
     //--------------------------------------------------------------------------------------------------
