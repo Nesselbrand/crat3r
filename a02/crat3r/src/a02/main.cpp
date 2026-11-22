@@ -793,9 +793,7 @@ class Assignment final {
             };
 
             const VkDescriptorBufferInfo bufferInfo{
-                .buffer = m_materialUniformBuffers[i].buffer,
-                .offset = 0,
-                .range = VK_WHOLE_SIZE
+                .buffer = m_materialUniformBuffers[i].buffer, .offset = 0, .range = VK_WHOLE_SIZE
             };
 
             const VkWriteDescriptorSet writes[]{
@@ -807,14 +805,12 @@ class Assignment final {
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .pImageInfo = &imageInfo,
                 },
-                {
-                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    .dstSet = descriptorSet,
-                    .dstBinding = 1,
-                    .descriptorCount = 1,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .pBufferInfo = &bufferInfo
-                }
+                {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                 .dstSet = descriptorSet,
+                 .dstBinding = 1,
+                 .descriptorCount = 1,
+                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                 .pBufferInfo = &bufferInfo}
             };
 
             vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
@@ -885,10 +881,8 @@ class Assignment final {
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-        const glm::mat4 viewProjection = m_app.getProjMat() * m_app.getViewMat();
-
-        vk_self_opaqueConditionalDraw(commandBuffer, viewProjection, true);
-        vk_self_opaqueConditionalDraw(commandBuffer, viewProjection, false);
+        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(),true);
+        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(),false);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -935,25 +929,50 @@ class Assignment final {
         // field. You might want to extract everything corresponding to a draw call into a seperate function.
     }
 
-    void vk_self_opaqueConditionalDraw(VkCommandBuffer commandBuffer, glm::mat4 viewProjection, bool drawOpaque) {
+    void vk_self_opaqueConditionalSortAndDraw(VkCommandBuffer commandBuffer, glm::mat4 projection, glm::mat4 view, bool drawOpaque) {
+        struct DrawItem {
+            uint32_t mesh_index;
+            glm::mat4 model;
+            float viewZ;
+        };
+
+        std::vector<DrawItem> items;
+
         m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
             const auto& mesh = m_scene.meshes[meshIndex];
             const bool isOpaque = m_scene.materials[mesh.materialIdx].alphaMode == Scene::Material::AlphaMode::Opaque;
 
             if (drawOpaque != isOpaque) return;
 
+            float viewZ = 0.0f;
+            if (!drawOpaque){
+                const glm::vec3 boundingBoxCenter = (mesh.aabbMin + mesh.aabbMax) * 0.5f;
+                const glm::vec4 viewPositionCenter = view * model * glm::vec4(boundingBoxCenter, 1.0f); //hier nur view und nicht projection * view lolz
+                viewZ = viewPositionCenter.z;
+            }
+
+            items.push_back({meshIndex, model, viewZ});
+        });
+
+        if (!drawOpaque){
+            std::stable_sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b){
+                return  a.viewZ < b.viewZ;
+            }); //stable_sort, damit bei gleichen viewZ die ursprüngliche Reihenfolge beibehalten wird
+        }
+
+        for (const auto& item : items) {
             vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
                 m_pipelineLayout,
                 0,
                 1,
-                &m_materialDescriptorSets[mesh.materialIdx],
+                &m_materialDescriptorSets[m_scene.meshes[item.mesh_index].materialIdx],
                 0,
                 nullptr
             );
 
-            const VertexPushConstants pushConstants{.MVP = viewProjection * model};
+            const VertexPushConstants pushConstants{.MVP = projection * view * item.model};
 
             vkCmdPushConstants(
                 commandBuffer,
@@ -964,11 +983,11 @@ class Assignment final {
                 &pushConstants
             );
             const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[meshIndex].buffer, &offset);
-            vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[meshIndex].buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[item.mesh_index].buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[item.mesh_index].buffer, 0, VK_INDEX_TYPE_UINT32);
 
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
-        });
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(m_scene.meshes[item.mesh_index].indices.size()), 1, 0, 0, 0);
+        }
     }
 
     //--------------------------------------------------------------------------------------------------

@@ -15,9 +15,11 @@ layout(set = 0, binding = 0) uniform sampler2D diffuseTexture;
 layout(set = 0, binding = 1) uniform MaterialUniformBuffer {vec4 baseColor; int hasTexture;} material;
 
 void main() {
-
     if(material.hasTexture != 0){
         outColor = texture(diffuseTexture, fragUv);
+        if (outColor.a == 0.0) {
+            discard;
+        }
     } else {
         outColor = material.baseColor;
     }
