@@ -33,9 +33,8 @@ constexpr bool VSYNC = true;
 // Update the model to be loaded here.
 const std::string SCENE = //
     ""
-    "assets/shiba.glb"
-    // "assets/tokyo.glb"
-    ;
+    //"assets/shiba.glb"
+    "assets/tokyo.glb";
 
 //--------------------------------------------------------------------------------------------------
 
@@ -115,8 +114,12 @@ class Assignment final {
         vkDestroyRenderPass(device, m_renderPass, nullptr);
         vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
         vkDestroyPipeline(device, m_pipeline, nullptr);
-        m_vertexBuffer.deinit(allocator);
-        m_indexBuffer.deinit(allocator);
+        for (auto& buffer : m_vertexBuffers) {
+            buffer.deinit(allocator);
+        }
+        for (auto& buffer : m_indexBuffers) {
+            buffer.deinit(allocator);
+        }
         freeDepthResources();
         freeFramebuffer();
         vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
@@ -138,8 +141,8 @@ class Assignment final {
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
-    Buffer m_vertexBuffer{};
-    Buffer m_indexBuffer{};
+    std::vector<Buffer> m_vertexBuffers;
+    std::vector<Buffer> m_indexBuffers;
     Image m_depthImage{};
     VkImageView m_depthImageView = VK_NULL_HANDLE;
 
@@ -593,22 +596,27 @@ class Assignment final {
         // TODO: Assignment 2.9
         // Iterate over the meshes (not nodes!) of the scene and create a vertex buffer for each mesh.
 
-        const auto& vertices = m_scene.meshes.front().vertices;
+        m_vertexBuffers.reserve(m_scene.meshes.size());
 
-        m_vertexBuffer = uploadBufferWithStaging(
-            vertices.data(), vertices.size() * sizeof(Scene::Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-        );
+        for (const auto& mesh : m_scene.meshes) {
+            m_vertexBuffers.push_back(uploadBufferWithStaging(
+                mesh.vertices.data(), mesh.vertices.size() * sizeof(Scene::Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+            ));
+        }
     }
 
     void createIndexBuffers() {
         // TODO: Assignment 2.3
         // Create an index buffer that holds six indices pointing to the above vertices. Use a 32-bit unsigned integer
         // for the indices. You should then be able to reduce the number of vertices in the vertex buffer to four.
-        const auto& indices = m_scene.meshes.front().indices;
 
-        m_indexBuffer = uploadBufferWithStaging(
-            indices.data(), indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT
-        );
+        m_indexBuffers.reserve(m_scene.meshes.size());
+
+        for (const auto& mesh : m_scene.meshes) {
+            m_indexBuffers.push_back(uploadBufferWithStaging(
+                mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+            ));
+        }
 
         // TODO: Assignment 2.6
         // Upload the indices of the first mesh in the scene instead.
@@ -622,7 +630,6 @@ class Assignment final {
 
         const auto& texture = m_scene.textures.at(0);
 
-
         m_textureImage = uploadImageWithStaging(
             texture.data.data(),
             texture.data.size(),
@@ -631,7 +638,7 @@ class Assignment final {
             {texture.width, texture.height, 1},
             VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-            );
+        );
 
         const VkImageViewCreateInfo viewInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -665,17 +672,15 @@ class Assignment final {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .magFilter = VK_FILTER_LINEAR,
             .minFilter = VK_FILTER_LINEAR,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, //standard 0
-            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, //standard 0
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,   // standard 0
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, // standard 0
             .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
             .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
             .minLod = 0.0f,
             .maxLod = VK_LOD_CLAMP_NONE
         };
 
-        VK_CHECK(vkCreateSampler(
-            m_app.getDevice(), &samplerInfo, nullptr, &m_textureSampler
-        ));
+        VK_CHECK(vkCreateSampler(m_app.getDevice(), &samplerInfo, nullptr, &m_textureSampler));
     }
 
     void createUniformBuffers() {
@@ -701,9 +706,7 @@ class Assignment final {
             .pPoolSizes = &poolSize,
         };
 
-        VK_CHECK(vkCreateDescriptorPool(
-            m_app.getDevice(), &poolInfo, nullptr, &m_descriptorPool
-        ));
+        VK_CHECK(vkCreateDescriptorPool(m_app.getDevice(), &poolInfo, nullptr, &m_descriptorPool));
 
         // TODO: Assignment 2.10
         // Reserve enough space for as many descriptors and sets as there are materials (not textures!) in the scene.
@@ -791,7 +794,9 @@ class Assignment final {
 
         vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+        vkCmdBindDescriptorSets(
+            commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr
+        );
 
         const VkViewport viewport{
             .x = 0.0f,
@@ -807,24 +812,27 @@ class Assignment final {
             .extent = extent,
         };
 
-        const auto& node = m_scene.nodes.front();
-        const auto& mesh = m_scene.meshes[node.meshes.front()];
-
-        const VertexPushConstants pushConstants{.MVP = m_app.getProjMat() * m_app.getViewMat() * node.transform};
-
-        vkCmdPushConstants(
-            commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
-        );
-
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
+        const glm::mat4 viewProjection = m_app.getProjMat() * m_app.getViewMat();
         const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffer.buffer, &offset);
-        vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+        m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
+            const auto& mesh = m_scene.meshes[meshIndex];
+
+            const VertexPushConstants pushConstants{.MVP = viewProjection * model};
+
+            vkCmdPushConstants(
+                commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
+            );
+
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[meshIndex].buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[meshIndex].buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mesh.indices.size()), 1, 0, 0, 0);
+        });
 
         vkCmdEndRenderPass(commandBuffer);
 
