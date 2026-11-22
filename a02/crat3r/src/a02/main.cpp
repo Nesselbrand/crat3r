@@ -45,6 +45,7 @@ struct VertexPushConstants {
 struct MaterialUniformBuffer {
     glm::vec4 baseColor;
     int32_t hasTexture;
+    float alphacutoff;
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -720,13 +721,26 @@ class Assignment final {
 
         m_materialUniformBuffers.reserve(
             m_scene.materials.size()
-        ); // Reinen Speicher anlegen {resize würde die Objekte anlegen, dann unten über index zuweisen anstatt
-           // push_back}
+        ); // Reinen Speicher anlegen {resize würde die Objekte anlegen, dann unten über index zuweisen anstatt push_back}
 
         for (const auto& material : m_scene.materials) {
+            // Übergabe eines materialspezifischen Alpha-Schwellwerts an den Fragmentshader.
+            // Für das Laubmaterial „alpha“ der Tokyo-Szene: Verwerfen von Fragmenten mit Alpha < 0.5.
+            // Dadurch Vermeidung von Tiefenschreibzugriffen an fast transparenten Blatträndern
+            // und Verringerung des dunklen Saums vor den Fenstern. Schwellwert 0.0 für alle
+            // übrigen Materialien zur Erhaltung der Transparenzabstufungen bei getöntem Glas.
+            //
+            // Übliche Vorgehensweise: Kennzeichnung von Laub im glTF-Modell mit alphaMode = MASK
+            // und Festlegung des alphaCutoff im Material. Verwerfen der Fragmente unterhalb der
+            // Schwelle und deckende Darstellung der übrigen Fragmente. Für Glas Verwendung von
+            // alphaMode = BLEND und anschließendes Zeichnen von hinten nach vorne.
+            //
+            // Auswahl der Schwelle anhand des Materialnamens in diesem Beispiel aufgrund
+            // der Kennzeichnung des Laubs als BLEND in der Tokyo-Szene.
             const MaterialUniformBuffer uniformBuffer{
                 .baseColor = glm::vec4(material.colDiffuse, material.opacity),
-                .hasTexture = material.texDiffuseIdx.has_value() ? 1 : 0
+                .hasTexture = material.texDiffuseIdx.has_value() ? 1 : 0,
+                .alphacutoff = material.name == "alpha" ? 0.5f : 0.0f,
             };
 
             m_materialUniformBuffers.push_back(

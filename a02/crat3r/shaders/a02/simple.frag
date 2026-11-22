@@ -12,12 +12,12 @@ layout(set = 0, binding = 0) uniform sampler2D diffuseTexture;
 // Add the binding for the material uniform buffer and, in case the material does not have a texture,
 // use the uniform base color instead.
 
-layout(set = 0, binding = 1) uniform MaterialUniformBuffer {vec4 baseColor; int hasTexture;} material;
+layout(set = 0, binding = 1) uniform MaterialUniformBuffer {vec4 baseColor; int hasTexture; float alphaCutoff;} material;
 
 void main() {
     if(material.hasTexture != 0){
         outColor = texture(diffuseTexture, fragUv);
-        if (outColor.a == 0.0) {
+        if (outColor.a < material.alphaCutoff) {// Ausschluss fast transparenter Blattränder
             discard;
         }
     } else {
