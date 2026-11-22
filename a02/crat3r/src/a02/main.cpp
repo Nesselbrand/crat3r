@@ -125,8 +125,13 @@ class Assignment final {
         vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
         vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
         vkDestroySampler(device, m_textureSampler, nullptr);
-        vkDestroyImageView(device, m_textureImageView, nullptr);
-        m_textureImage.deinit(allocator);
+        for (VkImageView view : m_textureImageViews) {
+            vkDestroyImageView(device, view, nullptr);
+        }
+
+        for (auto& image : m_textureImages) {
+            image.deinit(allocator);
+        }
 
         m_app.deinit();
     }
@@ -146,13 +151,13 @@ class Assignment final {
     Image m_depthImage{};
     VkImageView m_depthImageView = VK_NULL_HANDLE;
 
-    Image m_textureImage{};
-    VkImageView m_textureImageView = VK_NULL_HANDLE;
+    std::vector<Image> m_textureImages;
+    std::vector<VkImageView> m_textureImageViews;
     VkSampler m_textureSampler = VK_NULL_HANDLE;
 
     VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_materialDescriptorSets;
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -628,33 +633,38 @@ class Assignment final {
     void createTextures() {
         const VmaAllocator allocator = m_app.getAllocator();
 
-        const auto& texture = m_scene.textures.at(0);
+        m_textureImages.resize(m_scene.textures.size());
+        m_textureImageViews.resize(m_scene.textures.size());
 
-        m_textureImage = uploadImageWithStaging(
-            texture.data.data(),
-            texture.data.size(),
-            VK_IMAGE_TYPE_2D,
-            texture.format,
-            {texture.width, texture.height, 1},
-            VK_IMAGE_USAGE_SAMPLED_BIT,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        );
+        for (int i = 0; i < m_scene.textures.size() ; ++i) {
+            const auto& texture = m_scene.textures.at(i);
 
-        const VkImageViewCreateInfo viewInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = m_textureImage.image,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = texture.format,
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
+            m_textureImages[i] = uploadImageWithStaging(
+                texture.data.data(),
+                texture.data.size(),
+                VK_IMAGE_TYPE_2D,
+                texture.format,
+                {texture.width, texture.height, 1},
+                VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            );
 
-        VK_CHECK(vkCreateImageView(m_app.getDevice(), &viewInfo, nullptr, &m_textureImageView));
+            const VkImageViewCreateInfo viewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = m_textureImages[i].image,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = texture.format,
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                }
+            };
+
+            VK_CHECK(vkCreateImageView(m_app.getDevice(), &viewInfo, nullptr, &m_textureImageViews[i]));
+        }
         // TODO: Assignment 2.8
         // Upload the first texture of the scene ('m_scene.textures[0]') to a device local image. The format of
         // the texture is given by 'texture.format'. You may use the utility function 'uploadImageWithStaging'.
@@ -694,14 +704,17 @@ class Assignment final {
     void createDescriptorPool() {
         // TODO: Assignment 2.8
         // Create a descriptor pool for one combined image sampler.
+
+        const auto materialCount = static_cast<uint32_t>(m_scene.materials.size());
+
         const VkDescriptorPoolSize poolSize{
             .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
+            .descriptorCount = materialCount,
         };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets = 1,
+            .maxSets = materialCount,
             .poolSizeCount = 1,
             .pPoolSizes = &poolSize,
         };
@@ -721,6 +734,8 @@ class Assignment final {
 
         const VkDevice device = m_app.getDevice();
 
+        m_materialDescriptorSets.resize(m_scene.materials.size());
+
         const VkDescriptorSetAllocateInfo allocInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = m_descriptorPool,
@@ -728,24 +743,30 @@ class Assignment final {
             .pSetLayouts = &m_descriptorSetLayout,
         };
 
-        VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &m_descriptorSet));
+        for (int i = 0; i < m_scene.materials.size(); ++i) {
+            const auto& material = m_scene.materials[i];
+            const uint32_t textureIdx = material.texDiffuseIdx.value_or(0); //Default value 0
+            auto& descriptorSet = m_materialDescriptorSets[i];
 
-        const VkDescriptorImageInfo imageInfo{
-            .sampler = m_textureSampler,
-            .imageView = m_textureImageView,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
+            VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
 
-        const VkWriteDescriptorSet write{
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = m_descriptorSet,
-            .dstBinding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = &imageInfo,
-        };
+            const VkDescriptorImageInfo imageInfo{
+                .sampler = m_textureSampler,
+                .imageView = m_textureImageViews.at(textureIdx), //Hier war kurzzeitig i und nicht textureIdx lolz dann waren die Texturen sehr wild verteilt
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
 
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            const VkWriteDescriptorSet write{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = descriptorSet,
+                .dstBinding = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = &imageInfo,
+            };
+
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
 
         // TODO: Assignment 2.10
         // Create a seperate descriptor set for each material. The index of the texure a material uses is given
@@ -794,10 +815,6 @@ class Assignment final {
 
         vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindDescriptorSets(
-            commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr
-        );
-
         const VkViewport viewport{
             .x = 0.0f,
             .y = 0.0f,
@@ -821,6 +838,10 @@ class Assignment final {
 
         m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
             const auto& mesh = m_scene.meshes[meshIndex];
+
+            vkCmdBindDescriptorSets(
+                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_materialDescriptorSets[mesh.materialIdx], 0, nullptr
+            );
 
             const VertexPushConstants pushConstants{.MVP = viewProjection * model};
 
