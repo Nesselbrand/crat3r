@@ -12,6 +12,13 @@ layout(set = 0, binding = 0) uniform sampler2D diffuseTexture;
 // Add the binding for the material uniform buffer and, in case the material does not have a texture,
 // use the uniform base color instead.
 
+layout(set = 0, binding = 1) uniform MaterialUniformBuffer {vec4 baseColor; int hasTexture;} material;
+
 void main() {
-    outColor = texture(diffuseTexture, fragUv);
+
+    if(material.hasTexture != 0){
+        outColor = texture(diffuseTexture, fragUv);
+    } else {
+        outColor = material.baseColor;
+    }
 }

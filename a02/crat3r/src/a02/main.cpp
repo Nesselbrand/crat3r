@@ -133,6 +133,10 @@ class Assignment final {
             image.deinit(allocator);
         }
 
+        for (auto& buffer : m_materialUniformBuffers) {
+            buffer.deinit(allocator);
+        }
+
         m_app.deinit();
     }
 
@@ -158,6 +162,8 @@ class Assignment final {
     VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_materialDescriptorSets;
+
+    std::vector<Buffer> m_materialUniformBuffers;
 
   private:
     //--------------------------------------------------------------------------------------------------
@@ -269,17 +275,23 @@ class Assignment final {
     void createDescriptorSetLayout() {
         // TODO: Assignment 2.8
         // Create a descriptor set layout for a single combined image sampler at binding zero.
-        const VkDescriptorSetLayoutBinding textureBinding{
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        const VkDescriptorSetLayoutBinding textureBindings[] = {
+            {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            {.binding = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}
         };
 
         const VkDescriptorSetLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &textureBinding,
+            .bindingCount = 2,
+            .pBindings = textureBindings,
         };
 
         VK_CHECK(vkCreateDescriptorSetLayout(m_app.getDevice(), &layoutInfo, nullptr, &m_descriptorSetLayout));
@@ -436,13 +448,14 @@ class Assignment final {
 
         const VkPipelineColorBlendAttachmentState colorAttachment{
             .blendEnable = VK_TRUE,
-            .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,              //Multipliziert neue farbe mit src.a
-            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,    //Multipliziert bisherige Farbe mit 1-src.a
-            .colorBlendOp = VK_BLEND_OP_ADD,                               //Addieren => Alpha Blending Formel
-            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,                    // Quellbeitrag: src.a * 1
-            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,    // Zielbeitrag: dst.a * (1 - src.a)
-            .alphaBlendOp = VK_BLEND_OP_ADD,                               // out.a = src.a + dst.a * (1 - src.a)
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+            .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,           // Multipliziert neue farbe mit src.a
+            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, // Multipliziert bisherige Farbe mit 1-src.a
+            .colorBlendOp = VK_BLEND_OP_ADD,                            // Addieren => Alpha Blending Formel
+            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,                 // Quellbeitrag: src.a * 1
+            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, // Zielbeitrag: dst.a * (1 - src.a)
+            .alphaBlendOp = VK_BLEND_OP_ADD,                            // out.a = src.a + dst.a * (1 - src.a)
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                              VK_COLOR_COMPONENT_A_BIT,
         };
 
         const VkPipelineColorBlendStateCreateInfo colorBlending{
@@ -641,7 +654,7 @@ class Assignment final {
         m_textureImages.resize(m_scene.textures.size());
         m_textureImageViews.resize(m_scene.textures.size());
 
-        for (int i = 0; i < m_scene.textures.size() ; ++i) {
+        for (int i = 0; i < m_scene.textures.size(); ++i) {
             const auto& texture = m_scene.textures.at(i);
 
             m_textureImages[i] = uploadImageWithStaging(
@@ -704,6 +717,22 @@ class Assignment final {
         // do not change, these buffers can be stored in device local memory. The base color of a material is
         // made up of 'material.colDiffuse' and 'material.opacity'. A material has a texture if
         // 'material.texDiffuseIdx.has_value()' is true.
+
+        m_materialUniformBuffers.reserve(
+            m_scene.materials.size()
+        ); // Reinen Speicher anlegen {resize würde die Objekte anlegen, dann unten über index zuweisen anstatt
+           // push_back}
+
+        for (const auto& material : m_scene.materials) {
+            const MaterialUniformBuffer uniformBuffer{
+                .baseColor = glm::vec4(material.colDiffuse, material.opacity),
+                .hasTexture = material.texDiffuseIdx.has_value() ? 1 : 0
+            };
+
+            m_materialUniformBuffers.push_back(
+                uploadBufferWithStaging(&uniformBuffer, sizeof(uniformBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+            ); // push_back automatisches anhängen an hinterste Stelle
+        }
     }
 
     void createDescriptorPool() {
@@ -712,16 +741,16 @@ class Assignment final {
 
         const auto materialCount = static_cast<uint32_t>(m_scene.materials.size());
 
-        const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = materialCount,
+        const VkDescriptorPoolSize poolSizes[] = {
+            {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = materialCount},
+            {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = materialCount}
         };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .maxSets = materialCount,
-            .poolSizeCount = 1,
-            .pPoolSizes = &poolSize,
+            .poolSizeCount = 2,
+            .pPoolSizes = poolSizes,
         };
 
         VK_CHECK(vkCreateDescriptorPool(m_app.getDevice(), &poolInfo, nullptr, &m_descriptorPool));
@@ -750,27 +779,45 @@ class Assignment final {
 
         for (int i = 0; i < m_scene.materials.size(); ++i) {
             const auto& material = m_scene.materials[i];
-            const uint32_t textureIdx = material.texDiffuseIdx.value_or(0); //Default value 0
+            const uint32_t textureIdx = material.texDiffuseIdx.value_or(0); // Default value 0
             auto& descriptorSet = m_materialDescriptorSets[i];
 
             VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
 
             const VkDescriptorImageInfo imageInfo{
                 .sampler = m_textureSampler,
-                .imageView = m_textureImageViews.at(textureIdx), //Hier war kurzzeitig i und nicht textureIdx lolz dann waren die Texturen sehr wild verteilt
+                .imageView = m_textureImageViews.at(
+                    textureIdx
+                ), // Hier war kurzzeitig i und nicht textureIdx lolz dann waren die Texturen sehr wild verteilt
                 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
 
-            const VkWriteDescriptorSet write{
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptorSet,
-                .dstBinding = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .pImageInfo = &imageInfo,
+            const VkDescriptorBufferInfo bufferInfo{
+                .buffer = m_materialUniformBuffers[i].buffer,
+                .offset = 0,
+                .range = VK_WHOLE_SIZE
             };
 
-            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            const VkWriteDescriptorSet writes[]{
+                {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = descriptorSet,
+                    .dstBinding = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .pImageInfo = &imageInfo,
+                },
+                {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = descriptorSet,
+                    .dstBinding = 1,
+                    .descriptorCount = 1,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .pBufferInfo = &bufferInfo
+                }
+            };
+
+            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
         }
 
         // TODO: Assignment 2.10
@@ -888,7 +935,7 @@ class Assignment final {
         // field. You might want to extract everything corresponding to a draw call into a seperate function.
     }
 
-    void vk_self_opaqueConditionalDraw(VkCommandBuffer commandBuffer, glm::mat4 viewProjection, bool drawOpaque){
+    void vk_self_opaqueConditionalDraw(VkCommandBuffer commandBuffer, glm::mat4 viewProjection, bool drawOpaque) {
         m_scene.traverseNodes([&](const glm::mat4& model, uint32_t meshIndex) {
             const auto& mesh = m_scene.meshes[meshIndex];
             const bool isOpaque = m_scene.materials[mesh.materialIdx].alphaMode == Scene::Material::AlphaMode::Opaque;
@@ -896,13 +943,25 @@ class Assignment final {
             if (drawOpaque != isOpaque) return;
 
             vkCmdBindDescriptorSets(
-                commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_materialDescriptorSets[mesh.materialIdx], 0, nullptr
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_pipelineLayout,
+                0,
+                1,
+                &m_materialDescriptorSets[mesh.materialIdx],
+                0,
+                nullptr
             );
 
             const VertexPushConstants pushConstants{.MVP = viewProjection * model};
 
             vkCmdPushConstants(
-                commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(VertexPushConstants), &pushConstants
+                commandBuffer,
+                m_pipelineLayout,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                0,
+                sizeof(VertexPushConstants),
+                &pushConstants
             );
             const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[meshIndex].buffer, &offset);
