@@ -665,7 +665,8 @@ class Assignment final {
                 texture.format,
                 {texture.width, texture.height, 1},
                 VK_IMAGE_USAGE_SAMPLED_BIT,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                texture.mipLevels
             );
 
             const VkImageViewCreateInfo viewInfo{
@@ -676,7 +677,7 @@ class Assignment final {
                 .subresourceRange = {
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
-                    .levelCount = 1,
+                    .levelCount = texture.mipLevels,
                     .baseArrayLayer = 0,
                     .layerCount = 1,
                 }
@@ -701,7 +702,7 @@ class Assignment final {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .magFilter = VK_FILTER_LINEAR,
             .minFilter = VK_FILTER_LINEAR,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,   // standard 0
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,   // standard 0
             .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, // standard 0
             .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
             .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -1060,7 +1061,8 @@ class Assignment final {
         VkFormat format,
         VkExtent3D extent,
         VkImageUsageFlags usage,
-        VkImageLayout finalLayout
+        VkImageLayout finalLayout,
+        uint32_t mipLevels = 1
     ) {
         const VmaAllocator allocator = m_app.getAllocator();
 
@@ -1085,13 +1087,14 @@ class Assignment final {
             extent,
             VK_SAMPLE_COUNT_1_BIT,
             VK_IMAGE_TILING_OPTIMAL,
-            usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+            usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            mipLevels
         );
 
         VK_CHECK(m_app.executeSingleTimeCommand([&](VkCommandBuffer commandBuffer) {
             const auto transferLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            resultImage.transitionLayout(commandBuffer, format, VK_IMAGE_LAYOUT_UNDEFINED, transferLayout);
+            resultImage.transitionLayout(commandBuffer, format, VK_IMAGE_LAYOUT_UNDEFINED, transferLayout, mipLevels);
 
             const VkBufferImageCopy region{
                 .bufferOffset = 0,
@@ -1103,7 +1106,46 @@ class Assignment final {
             };
             vkCmdCopyBufferToImage(commandBuffer, stagingBuffer.buffer, resultImage.image, transferLayout, 1, &region);
 
-            resultImage.transitionLayout(commandBuffer, format, transferLayout, finalLayout);
+            const auto srcLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            auto width = static_cast<int32_t>(extent.width);
+            auto height = static_cast<int32_t>(extent.height);
+
+            for (uint32_t level = 1; level < mipLevels; ++level) {
+                const uint32_t previous = level - 1;
+                const int32_t nextWidth = std::max(1, width / 2);
+                const int32_t nextHeight = std::max(1, height / 2);
+
+                resultImage.transitionLayout(
+                    commandBuffer, format, transferLayout, srcLayout, 1, previous
+                );
+
+                const VkImageBlit blit{
+                    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, previous, 0, 1},
+                    .srcOffsets = {{0, 0, 0}, {width, height, 1}},
+                    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1},
+                    .dstOffsets = {{0, 0, 0}, {nextWidth, nextHeight, 1}},
+                };
+
+                vkCmdBlitImage(
+                    commandBuffer,
+                    resultImage.image,
+                    srcLayout,
+                    resultImage.image,
+                    transferLayout,
+                    1,
+                    &blit,
+                    VK_FILTER_LINEAR
+                );
+
+                resultImage.transitionLayout(
+                    commandBuffer, format, srcLayout, finalLayout, 1, previous
+                );
+
+                width = nextWidth;
+                height = nextHeight;
+            }
+
+            resultImage.transitionLayout(commandBuffer, format, transferLayout, finalLayout, 1, mipLevels - 1);
         }));
 
         stagingBuffer.deinit(allocator);
