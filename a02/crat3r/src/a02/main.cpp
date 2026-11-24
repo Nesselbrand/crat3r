@@ -198,23 +198,23 @@ class Assignment final {
 
         const std::array<VkAttachmentDescription, 2> attachments{{
             {
-                // color
+                // Framebuffer
                 .format = targetFormat,
                 .samples = VK_SAMPLE_COUNT_1_BIT,
-                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,   // Verwerfen des alten Inhalts; Bild hat nur Clear Value
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE, // Speichern des Inhalts zum anzeigen
+                .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,   // verwenden wir nicht
+                .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, // verwenden wir nicht
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
                 .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             },
-            {// depth
+            {// DepthBuffer
              .format = VK_FORMAT_D32_SFLOAT,
              .samples = VK_SAMPLE_COUNT_1_BIT,
-             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-             .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-             .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,            // Verwerfen des alten Inhalts; Bild hat nur Clear Value
+             .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,      // die Tiefenwerte brauchen wir nur innerhalb des passes
+             .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, // verwenden wir nicht
+             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, // verwenden wir nicht
              .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
              .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
             },
@@ -230,6 +230,7 @@ class Assignment final {
         };
 
         const VkSubpassDescription subPasses{
+            // Ein Subpass = Zeichenabschnitt
             .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
             .colorAttachmentCount = 1,
             .pColorAttachments = &colorAttachReference,
@@ -249,8 +250,8 @@ class Assignment final {
              {
                  .srcSubpass = VK_SUBPASS_EXTERNAL,
                  .dstSubpass = 0,
-                 .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                 .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                 .srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                 .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                  .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
              }}
@@ -388,20 +389,21 @@ class Assignment final {
         const VkVertexInputBindingDescription vertexBinding{
             .binding = 0,
             .stride = sizeof(Scene::Vertex),
-            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+            .inputRate =
+                VK_VERTEX_INPUT_RATE_VERTEX, // Position und UV-Koordinaten werden pro Vertex aus dem Buffer gelesen.
         };
 
         const VkVertexInputAttributeDescription vertexAttributes[] = {
             {
                 .location = 0,
                 .binding = 0,
-                .format = VK_FORMAT_R32G32B32_SFLOAT,
+                .format = VK_FORMAT_R32G32B32_SFLOAT, // Vec3 a 32bit
                 .offset = offsetof(Scene::Vertex, pos),
             },
             {
                 .location = 1,
                 .binding = 0,
-                .format = VK_FORMAT_R32G32_SFLOAT,
+                .format = VK_FORMAT_R32G32_SFLOAT, // vec2 a 32bit
                 .offset = offsetof(Scene::Vertex, uv),
             },
         };
@@ -415,6 +417,7 @@ class Assignment final {
         };
 
         const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            // legt fest, wie Vulkan die Vertices zu geometrischen Formen zusammensetzt
             .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
         };
@@ -429,8 +432,8 @@ class Assignment final {
 
         const VkPipelineRasterizationStateCreateInfo rasterization{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-            .depthClampEnable = VK_FALSE,
-            .rasterizerDiscardEnable = VK_FALSE,
+            .depthClampEnable = VK_FALSE,        // Dreiecke hinter 1.0 werden abgeschnitten
+            .rasterizerDiscardEnable = VK_FALSE, // Behalten der Dreiecke für den Frag Shader
             .polygonMode = VK_POLYGON_MODE_FILL,
             .cullMode = VK_CULL_MODE_BACK_BIT,
             .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
@@ -438,7 +441,7 @@ class Assignment final {
             .depthBiasConstantFactor = 0,
             .depthBiasClamp = 0,
             .depthBiasSlopeFactor = 0,
-            .lineWidth = 1.0f
+            .lineWidth = 1.0f // Validation Layer
         };
 
         const VkPipelineMultisampleStateCreateInfo multisampling{
@@ -664,7 +667,7 @@ class Assignment final {
                 VK_IMAGE_TYPE_2D,
                 texture.format,
                 {texture.width, texture.height, 1},
-                VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_USAGE_SAMPLED_BIT, //Shader dar das Bild mit einem Sampler lesen
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 texture.mipLevels
             );
@@ -702,12 +705,12 @@ class Assignment final {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .magFilter = VK_FILTER_LINEAR,
             .minFilter = VK_FILTER_LINEAR,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,   // standard 0
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR, //Gleichmäßiger übergang zwischen den Mip Leveln
             .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, // standard 0
             .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
             .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
             .minLod = 0.0f,
-            .maxLod = VK_LOD_CLAMP_NONE
+            .maxLod = VK_LOD_CLAMP_NONE //Keine LOD Obergrenze -> GPU kann bis zur kleinsten Mip-Stufe gehen
         };
 
         VK_CHECK(vkCreateSampler(m_app.getDevice(), &samplerInfo, nullptr, &m_textureSampler));
@@ -722,7 +725,8 @@ class Assignment final {
 
         m_materialUniformBuffers.reserve(
             m_scene.materials.size()
-        ); // Reinen Speicher anlegen {resize würde die Objekte anlegen, dann unten über index zuweisen anstatt push_back}
+        ); // Reinen Speicher anlegen {resize würde die Objekte anlegen, dann unten über index zuweisen anstatt
+           // push_back}
 
         for (const auto& material : m_scene.materials) {
             // Übergabe eines materialspezifischen Alpha-Schwellwerts an den Fragmentshader.
@@ -876,7 +880,9 @@ class Assignment final {
             .pClearValues = clearValues,
         };
 
-        vkCmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(
+            commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE
+        ); // VK_SUBPASS_CONTENTS_INLINE: zeichenbefehle werden im selben primären cmdBuffer aufgezeichten
 
         const VkViewport viewport{
             .x = 0.0f,
@@ -896,8 +902,8 @@ class Assignment final {
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(),true);
-        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(),false);
+        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(), true);
+        vk_self_opaqueConditionalSortAndDraw(commandBuffer, m_app.getProjMat(), m_app.getViewMat(), false);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -944,7 +950,9 @@ class Assignment final {
         // field. You might want to extract everything corresponding to a draw call into a seperate function.
     }
 
-    void vk_self_opaqueConditionalSortAndDraw(VkCommandBuffer commandBuffer, glm::mat4 projection, glm::mat4 view, bool drawOpaque) {
+    void vk_self_opaqueConditionalSortAndDraw(
+        VkCommandBuffer commandBuffer, glm::mat4 projection, glm::mat4 view, bool drawOpaque
+    ) {
         struct DrawItem {
             uint32_t mesh_index;
             glm::mat4 model;
@@ -960,19 +968,19 @@ class Assignment final {
             if (drawOpaque != isOpaque) return;
 
             float viewZ = 0.0f;
-            if (!drawOpaque){
+            if (!drawOpaque) {
                 const glm::vec3 boundingBoxCenter = (mesh.aabbMin + mesh.aabbMax) * 0.5f;
-                const glm::vec4 viewPositionCenter = view * model * glm::vec4(boundingBoxCenter, 1.0f); //hier nur view und nicht projection * view lolz
+                const glm::vec4 viewPositionCenter = view * model * glm::vec4(boundingBoxCenter, 1.0f); // hier nur view und nicht projection * view lolz
                 viewZ = viewPositionCenter.z;
             }
 
             items.push_back({meshIndex, model, viewZ});
         });
 
-        if (!drawOpaque){
-            std::stable_sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b){
-                return  a.viewZ < b.viewZ;
-            }); //stable_sort, damit bei gleichen viewZ die ursprüngliche Reihenfolge beibehalten wird
+        if (!drawOpaque) {
+            std::stable_sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
+                return a.viewZ < b.viewZ;
+            }); // stable_sort, damit bei gleichen viewZ die ursprüngliche Reihenfolge beibehalten wird
         }
 
         for (const auto& item : items) {
@@ -1001,7 +1009,9 @@ class Assignment final {
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, &m_vertexBuffers[item.mesh_index].buffer, &offset);
             vkCmdBindIndexBuffer(commandBuffer, m_indexBuffers[item.mesh_index].buffer, 0, VK_INDEX_TYPE_UINT32);
 
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(m_scene.meshes[item.mesh_index].indices.size()), 1, 0, 0, 0);
+            vkCmdDrawIndexed(
+                commandBuffer, static_cast<uint32_t>(m_scene.meshes[item.mesh_index].indices.size()), 1, 0, 0, 0
+            );
         }
     }
 
@@ -1115,9 +1125,7 @@ class Assignment final {
                 const int32_t nextWidth = std::max(1, width / 2);
                 const int32_t nextHeight = std::max(1, height / 2);
 
-                resultImage.transitionLayout(
-                    commandBuffer, format, transferLayout, srcLayout, 1, previous
-                );
+                resultImage.transitionLayout(commandBuffer, format, transferLayout, srcLayout, 1, previous);
 
                 const VkImageBlit blit{
                     .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, previous, 0, 1},
@@ -1137,9 +1145,7 @@ class Assignment final {
                     VK_FILTER_LINEAR
                 );
 
-                resultImage.transitionLayout(
-                    commandBuffer, format, srcLayout, finalLayout, 1, previous
-                );
+                resultImage.transitionLayout(commandBuffer, format, srcLayout, finalLayout, 1, previous);
 
                 width = nextWidth;
                 height = nextHeight;
