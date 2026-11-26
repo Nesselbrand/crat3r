@@ -1011,7 +1011,7 @@ class Assignment final {
 
             vkCmdDrawIndexed(
                 commandBuffer, static_cast<uint32_t>(m_scene.meshes[item.mesh_index].indices.size()), 1, 0, 0, 0
-            );
+            ); //cmdBuf, indxCount, instCount, firstIndx, vertOffset, firsInstc
         }
     }
 
