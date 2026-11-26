@@ -389,8 +389,7 @@ class Assignment final {
         const VkVertexInputBindingDescription vertexBinding{
             .binding = 0,
             .stride = sizeof(Scene::Vertex),
-            .inputRate =
-                VK_VERTEX_INPUT_RATE_VERTEX, // Position und UV-Koordinaten werden pro Vertex aus dem Buffer gelesen.
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX, // Position und UV-Koordinaten werden pro Vertex aus dem Buffer gelesen.
         };
 
         const VkVertexInputAttributeDescription vertexAttributes[] = {
