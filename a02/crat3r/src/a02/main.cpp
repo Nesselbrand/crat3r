@@ -680,7 +680,7 @@ class Assignment final {
                 .subresourceRange = {
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
-                    .levelCount = texture.mipLevels,
+                    .levelCount = texture.mipLevels, //Curball
                     .baseArrayLayer = 0,
                     .layerCount = 1,
                 }
@@ -1097,7 +1097,8 @@ class Assignment final {
             extent,
             VK_SAMPLE_COUNT_1_BIT,
             VK_IMAGE_TILING_OPTIMAL,
-            usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, //Wir benötigen beide Transferflags da wir bei der Level erzeugung
+                                                                                             //aus dem ursprünglichen Bild die Infos für das nächste Level lesen
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             mipLevels
         );
@@ -1125,6 +1126,7 @@ class Assignment final {
                 const int32_t nextWidth = std::max(1, width / 2);
                 const int32_t nextHeight = std::max(1, height / 2);
 
+                //TRANSFER_DST_OPTIMAL → TRANSFER_SRC_OPTIMAL
                 resultImage.transitionLayout(commandBuffer, format, transferLayout, srcLayout, 1, previous);
 
                 const VkImageBlit blit{
@@ -1145,6 +1147,7 @@ class Assignment final {
                     VK_FILTER_LINEAR
                 );
 
+                //TRANSFER_SRC_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
                 resultImage.transitionLayout(commandBuffer, format, srcLayout, finalLayout, 1, previous);
 
                 width = nextWidth;
